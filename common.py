@@ -20,7 +20,7 @@ BROADCAST_ADDR = "255.255.255.255"
 MSG_GAME_INPUT    = "GAME_INPUT"
 MSG_GAME_UPDATE   = "GAME_UPDATE"
 
-# Reliable multicast control messages (ADDED)
+# Reliable multicast control messages
 MSG_ACK           = "ACK"
 MSG_NACK          = "NACK"
 
@@ -31,6 +31,9 @@ MSG_HEARTBEAT     = "HEARTBEAT"
 MSG_ELECTION      = "ELECTION"
 MSG_ELECTION_OK   = "ELECTION_OK"
 MSG_COORDINATOR   = "COORDINATOR"
+
+# --- NEW: Dynamic Membership Message ---
+MSG_JOIN          = "JOIN"
 
 # Election helper (alternate style / LCR)
 MSG_ELECTION_RESULT = "ELECTION_RESULT"
