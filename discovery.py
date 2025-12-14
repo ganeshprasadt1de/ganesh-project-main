@@ -2,15 +2,8 @@
 # Robust discovery helpers for the distributed Pong system.
 # - server_discovery_listener(server_id, bind_ip, stop_event)
 # - client_discover_servers(timeout=1.0, clock=None)
-#
-# This implementation:
-#  - replies to broadcast requests (existing behavior)
-#  - also joins a multicast group and replies to multicast discovery
-#  - client side will broadcast+multicast, and if nothing found will probe common loopback IPs
-#    (127.0.0.2 / 127.0.0.3) as a fallback for Windows loopback testing.
 
 import socket
-import struct
 import time
 from typing import List, Tuple, Optional
 from common import (
@@ -20,82 +13,48 @@ from common import (
     DISCOVERY_BROADCAST_PORT,
     MSG_DISCOVER_REQUEST,
     MSG_DISCOVER_RESPONSE,
-    MSG_DISCOVER_REPLY,
+    MSG_DISCOVER_REPLY,  # alias in some code-bases; import if present
 )
 
-MULTICAST_GROUP = "239.255.255.250"   # SSDP-style address (private/local multicast)
-MULTICAST_PORT = DISCOVERY_BROADCAST_PORT
-
-# Accept both names
+# A small helper to pick whichever discovery response constant exists
 _DISCOVER_RESPONSE_KEY = MSG_DISCOVER_RESPONSE if "MSG_DISCOVER_RESPONSE" in globals() else MSG_DISCOVER_REPLY
-
-
-def _join_multicast(sock: socket.socket, mcast_group: str, bind_ip: str = ""):
-    """
-    Join multicast group on the provided socket.
-    bind_ip should be the local interface IP to receive multicasts on ('' works as default).
-    """
-    try:
-        # pack group + interface (IPv4)
-        mreq = struct.pack("4s4s", socket.inet_aton(mcast_group), socket.inet_aton(bind_ip or "0.0.0.0"))
-        sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
-    except Exception:
-        # best-effort: ignore if not supported
-        pass
 
 
 def server_discovery_listener(server_id: str, bind_ip: str = "", stop_event=None):
     """
-    Run inside each server in a daemon thread.
-    - Listens for DISCOVER requests via broadcast AND multicast on DISCOVERY_BROADCAST_PORT.
-    - Replies directly to requestor with {"type": MSG_DISCOVER_RESPONSE, "id": server_id, "ip": bind_ip}
+    Run in a daemon thread inside each server.
+    - server_id: identifier string to advertise
+    - bind_ip: the IP address this server is using (e.g. "127.0.0.2"). If empty, binds to all interfaces.
+    - stop_event: threading.Event() instance used to request shutdown (optional).
+    Behavior:
+      * listens on UDP DISCOVERY_BROADCAST_PORT for discovery requests
+      * replies directly to the requestor with a small JSON-like dict:
+          {"type": MSG_DISCOVER_RESPONSE, "id": server_id, "ip": bind_ip}
+      * does not perform heavy work and returns when stop_event is set.
     """
+    # Bind specifically to the server's IP so multiple local servers can each bind the same discovery port
     bind_ip = bind_ip or ""
-    # socket for broadcast/unicast replies
     try:
         sock = make_udp_socket(bind_ip=bind_ip, bind_port=DISCOVERY_BROADCAST_PORT, broadcast=True)
     except OSError:
-        # fallback ephemeral bind if bind fails
+        # Fallback: ephemeral bind (some environments prevent binding the discovery port)
         sock = make_udp_socket(bind_ip=bind_ip, bind_port=0, broadcast=True)
 
-    # also create a multicast-listening socket bound to the same port
-    try:
-        mcast_sock = make_udp_socket(bind_ip=bind_ip, bind_port=DISCOVERY_BROADCAST_PORT, broadcast=False)
-        # allow reuse for multicast
-        _join_multicast(mcast_sock, MULTICAST_GROUP, bind_ip)
-        mcast_sock.settimeout(0.5)
-    except Exception:
-        mcast_sock = None
-
+    # Short recv timeout so we can check stop_event regularly
     sock.settimeout(0.5)
+
     try:
         while True:
             if stop_event is not None and stop_event.is_set():
                 break
-            # listen on both sockets (sock then mcast_sock), small timeout to check stop_event frequently
-            handled = False
             try:
-                msg, addr = recv_message(sock, None)
-                handled = True
+                msg, addr = recv_message(sock, None)  # clock not required here
             except socket.timeout:
-                pass
+                continue
             except OSError:
                 break
             except Exception:
-                pass
-
-            if not handled and mcast_sock:
-                try:
-                    msg, addr = recv_message(mcast_sock, None)
-                    handled = True
-                except socket.timeout:
-                    pass
-                except OSError:
-                    break
-                except Exception:
-                    pass
-
-            if not handled:
+                # ignore malformed messages and continue listening
                 continue
 
             if not isinstance(msg, dict):
@@ -103,92 +62,76 @@ def server_discovery_listener(server_id: str, bind_ip: str = "", stop_event=None
 
             mtype = msg.get("type")
             if mtype == MSG_DISCOVER_REQUEST:
+                # Send back a direct unicast reply to the requester with our id and bind IP.
                 reply = {"type": _DISCOVER_RESPONSE_KEY, "id": server_id, "ip": bind_ip or sock.getsockname()[0]}
                 try:
                     send_message(sock, addr, reply, None)
                 except Exception:
+                    # ignore send errors - discovery is best-effort
                     pass
+            # ignore other message types
     finally:
         try:
             sock.close()
         except Exception:
             pass
-        if mcast_sock:
-            try:
-                mcast_sock.close()
-            except Exception:
-                pass
 
 
 def client_discover_servers(timeout: float = 1.0, clock = None) -> List[Tuple[str, str]]:
     """
-    Broadcast and multicast a discovery request, collect responses for up to `timeout` seconds.
-    If no responses and common local loopback addresses are present, probe them (Windows-friendly).
-    Returns a list of (server_id, server_ip) tuples.
+    Broadcast a discovery request and collect replies for up to `timeout` seconds.
+    Returns a list of (server_id, server_ip) tuples (may be empty).
+
+    Behavior details:
+      - Sends one UDP broadcast to (<broadcast>, DISCOVERY_BROADCAST_PORT).
+      - Waits until `timeout` elapses, collecting all replies.
+      - Uses small per-recv timeouts to keep collecting replies until the full timeout.
     """
     results: List[Tuple[str, str]] = []
     start = time.time()
-
-    # create a socket that can broadcast and receive replies
+    # Create a UDP socket that can broadcast; bind to ephemeral port so replies come back here
     try:
         sock = make_udp_socket(bind_ip="", bind_port=0, broadcast=True)
     except OSError:
+        # fallback to non-broadcast socket (rare)
         sock = make_udp_socket(bind_ip="", bind_port=0, broadcast=False)
 
-    sock.settimeout(0.25)
-
-    # form request
+    # Make sure we can receive replies in a loop without stopping at first timeout
+    sock.settimeout(0.3)
+    # send discovery request
     request = {"type": MSG_DISCOVER_REQUEST}
-
-    # 1) Send broadcast (best-effort)
     try:
-        # raw broadcast
-        sock.sendto(b"DISCOVER", ("<broadcast>", DISCOVERY_BROADCAST_PORT))
+        # Use standard broadcast address and port
+        sock.sendto(b"DISCOVER", ("<broadcast>", DISCOVERY_BROADCAST_PORT))  # lightweight fallback for raw listeners
     except Exception:
+        # best-effort; if broadcast fails, we'll still listen for direct replies from servers on same host
         pass
 
     try:
-        # structured broadcast
+        # Also use send_message to send a structured payload (some listeners use structured recv)
         try:
             send_message(sock, ("<broadcast>", DISCOVERY_BROADCAST_PORT), request, clock)
         except Exception:
+            # ignore if structured send fails; we already did a raw broadcast attempt
             pass
-    except Exception:
-        pass
 
-    # 2) Send multicast discovery
-    try:
-        mcast_sock = make_udp_socket(bind_ip="", bind_port=0, broadcast=False)
-        mcast_sock.settimeout(0.25)
-        try:
-            send_message(mcast_sock, (MULTICAST_GROUP, MULTICAST_PORT), request, clock)
-        except Exception:
-            pass
-    except Exception:
-        mcast_sock = None
-
-    # 3) Collect replies until timeout
-    try:
+        # collect replies until timeout
         while time.time() - start < timeout:
             try:
                 msg, addr = recv_message(sock, clock)
             except socket.timeout:
-                # try to drain multicast socket too
-                if mcast_sock:
-                    try:
-                        msg, addr = recv_message(mcast_sock, clock)
-                    except Exception:
-                        continue
-                else:
-                    continue
+                # no data this slice — continue waiting until overall timeout
+                continue
             except OSError:
                 break
             except Exception:
+                # ignore parse errors and keep listening
                 continue
 
             if not isinstance(msg, dict):
                 continue
 
+            # Accept either MSG_DISCOVER_RESPONSE or MSG_DISCOVER_REPLY payloads (compatibility)
             mtype = msg.get("type")
             if mtype in (MSG_DISCOVER_RESPONSE, MSG_DISCOVER_REPLY, _DISCOVER_RESPONSE_KEY):
                 sid = msg.get("id")
@@ -197,46 +140,11 @@ def client_discover_servers(timeout: float = 1.0, clock = None) -> List[Tuple[st
                     tup = (sid, sip)
                     if tup not in results:
                         results.append(tup)
+            # otherwise ignore
+
     finally:
         try:
             sock.close()
-        except Exception:
-            pass
-        if mcast_sock:
-            try:
-                mcast_sock.close()
-            except Exception:
-                pass
-
-    # 4) If no results, attempt a small loopback probe (Windows dev fallback)
-    if not results:
-        probe_ips = ("127.0.0.2", "127.0.0.3", "127.0.0.1")
-        probe_sock = make_udp_socket(bind_ip="", bind_port=0, broadcast=False)
-        probe_sock.settimeout(0.2)
-        for ip in probe_ips:
-            try:
-                send_message(probe_sock, (ip, DISCOVERY_BROADCAST_PORT), request, clock)
-            except Exception:
-                continue
-
-        probe_start = time.time()
-        while time.time() - probe_start < 0.3:
-            try:
-                msg, addr = recv_message(probe_sock, clock)
-            except Exception:
-                break
-            if not isinstance(msg, dict):
-                continue
-            mtype = msg.get("type")
-            if mtype in (MSG_DISCOVER_RESPONSE, MSG_DISCOVER_REPLY, _DISCOVER_RESPONSE_KEY):
-                sid = msg.get("id")
-                sip = msg.get("ip") or (addr[0] if addr else None)
-                if sid and sip:
-                    tup = (sid, sip)
-                    if tup not in results:
-                        results.append(tup)
-        try:
-            probe_sock.close()
         except Exception:
             pass
 

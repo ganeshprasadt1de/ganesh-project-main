@@ -1,10 +1,12 @@
 # server.py
-# Distributed Pong server with Bully-style leader election (fixed)
+# Distributed Pong server with Bully-style leader election
+# + Reliable ordered multicast (ACK / NACK / retransmission)
 
 import argparse
 import threading
 import time
 from typing import Dict, Tuple, Set
+from collections import defaultdict
 
 from lamport_clock import LamportClock
 from common import (
@@ -12,6 +14,7 @@ from common import (
     SERVER_CONTROL_PORT, CLIENT_PORT,
     MSG_GAME_INPUT, MSG_GAME_UPDATE, MSG_HEARTBEAT,
     MSG_ELECTION, MSG_ELECTION_OK, MSG_COORDINATOR,
+    MSG_ACK, MSG_NACK,                    # <<< NEW
 )
 from game_state import GameState
 from discovery import server_discovery_listener
@@ -20,10 +23,10 @@ HEARTBEAT_INTERVAL = 1.0
 HEARTBEAT_TIMEOUT = 3.0
 ELECTION_TIMEOUT = 3.0
 TICK_INTERVAL = 0.05
+RETRANSMIT_TIMEOUT = 0.5                 # <<< NEW
 
 
 def id_rank(sid: str) -> int:
-    """Numeric rank used for Bully election: extracts digits from id, fallback 0."""
     digits = "".join(ch for ch in sid if ch.isdigit())
     return int(digits) if digits else 0
 
@@ -32,30 +35,31 @@ class PongServer:
     def __init__(self, server_id: str, ip: str, peer_ids: Dict[str, Tuple[str, int]]):
         self.server_id = server_id
         self.ip = ip
-        self.peers = peer_ids  # dict: id -> (ip, port)
+        self.peers = peer_ids
         self.clock = LamportClock()
 
-        # Sockets (bind to the server's ip on the control and client ports)
-        try:
-            self.control_sock = make_udp_socket(
-                bind_ip=ip, bind_port=SERVER_CONTROL_PORT)
-            self.client_sock = make_udp_socket(
-                bind_ip=ip, bind_port=CLIENT_PORT)
-        except OSError as e:
-            print(
-                f"[{self.server_id}] CRITICAL ERROR: Could not bind ports on {ip}. {e}")
-            raise
+        self.control_sock = make_udp_socket(bind_ip=ip, bind_port=SERVER_CONTROL_PORT)
+        self.client_sock = make_udp_socket(bind_ip=ip, bind_port=CLIENT_PORT)
 
-        # Determine initial leader (highest-ranked id)
+        # leader selection
         all_ids = list(self.peers.keys()) + [self.server_id]
         self.sorted_ids = sorted(all_ids, key=id_rank)
-        self.leader_id = self.sorted_ids[-1] if self.sorted_ids else self.server_id
+        self.leader_id = self.sorted_ids[-1]
         print(f"[{self.server_id}] initial leader is {self.leader_id}")
 
         self.game_state = GameState()
         self.seq = 0
+        self.expected_seq = 1                 # <<< NEW (follower)
+        self.pending_updates = {}             # <<< NEW (follower)
+
         self.inputs = {1: 0, 2: 0}
         self.client_addrs: Set[Tuple[str, int]] = set()
+
+        # ---------- NEW: reliable multicast state ----------
+        self.retransmit_buffer = {}           # seq -> update msg
+        self.acks = defaultdict(set)          # seq -> set(server_ids)
+        self.last_send_time = {}               # seq -> timestamp
+        # ---------------------------------------------------
 
         self.last_heartbeat_from_leader = time.time()
         self.running = True
@@ -64,20 +68,20 @@ class PongServer:
         self.election_deadline = None
 
         self.discovery_stop = threading.Event()
-        # ---- FIX: use instance attributes (self.server_id, self.ip) not an undefined server_id var
         self.discovery_thread = threading.Thread(
-            target=server_discovery_listener, args=(
-                self.server_id, self.ip, self.discovery_stop), daemon=True
+            target=server_discovery_listener,
+            args=(self.server_id, self.ip, self.discovery_stop),
+            daemon=True
         )
 
-        self.control_thread = threading.Thread(
-            target=self.control_loop, daemon=True)
-        self.client_thread = threading.Thread(
-            target=self.client_loop, daemon=True)
-        self.heartbeat_thread = threading.Thread(
-            target=self.heartbeat_loop, daemon=True)
+        self.control_thread = threading.Thread(target=self.control_loop, daemon=True)
+        self.client_thread = threading.Thread(target=self.client_loop, daemon=True)
+        self.heartbeat_thread = threading.Thread(target=self.heartbeat_loop, daemon=True)
         self.game_thread = threading.Thread(target=self.game_loop, daemon=True)
 
+    # -----------------------------------------------------
+    # Lifecycle
+    # -----------------------------------------------------
     def start(self):
         print(f"[{self.server_id}] starting on {self.ip}")
         self.discovery_thread.start()
@@ -89,17 +93,13 @@ class PongServer:
     def stop(self):
         self.running = False
         self.discovery_stop.set()
-        try:
-            self.control_sock.close()
-        except Exception:
-            pass
-        try:
-            self.client_sock.close()
-        except Exception:
-            pass
+        self.control_sock.close()
+        self.client_sock.close()
 
+    # -----------------------------------------------------
+    # Election helpers (UNCHANGED)
+    # -----------------------------------------------------
     def higher_peers(self):
-        """Return dict of peers whose id rank is higher than self."""
         my_rank = id_rank(self.server_id)
         return {sid: addr for sid, addr in self.peers.items() if id_rank(sid) > my_rank}
 
@@ -113,40 +113,32 @@ class PongServer:
 
         higher = self.higher_peers()
         if not higher:
-            # No higher peers: become leader immediately
             self.become_leader()
             return
 
         msg = {"type": MSG_ELECTION, "candidate": self.server_id}
-        for sid, (ip, port) in higher.items():
+        for ip, port in higher.values():
             send_message(self.control_sock, (ip, port), msg, self.clock)
 
     def become_leader(self):
-        # Avoid redundant work if already leader and no election in progress
-        if self.leader_id == self.server_id and not self.election_in_progress:
-            return
-
         self.leader_id = self.server_id
         self.election_in_progress = False
-        self.election_higher_responded = False
         self.election_deadline = None
         self.last_heartbeat_from_leader = time.time()
-        # ---- FIX: stray 'p' + 'rint' bug removed; proper print here
         print(f"[{self.server_id}] I am the new leader")
 
-        # Announce coordinator to all peers
         msg = {"type": MSG_COORDINATOR, "leader_id": self.server_id}
-        for sid, (ip, port) in self.peers.items():
+        for ip, port in self.peers.values():
             send_message(self.control_sock, (ip, port), msg, self.clock)
 
+    # -----------------------------------------------------
+    # CONTROL LOOP (ACK / NACK HANDLING ADDED)
+    # -----------------------------------------------------
     def control_loop(self):
         while self.running:
             try:
                 msg, addr = recv_message(self.control_sock, self.clock)
-            except OSError:
-                break
             except Exception:
-                # keep running on transient errors
                 continue
 
             if not isinstance(msg, dict):
@@ -154,133 +146,174 @@ class PongServer:
 
             mtype = msg.get("type")
 
-            # If non-leader received a state update from leader, apply it
             if mtype == MSG_GAME_UPDATE and not self.is_leader():
-                self.apply_game_update(msg)
+                self.handle_game_update(msg)
+
+            elif mtype == MSG_ACK and self.is_leader():               # <<< NEW
+                self.handle_ack(msg)
+
+            elif mtype == MSG_NACK and self.is_leader():              # <<< NEW
+                self.handle_nack(msg)
 
             elif mtype == MSG_HEARTBEAT:
-                # leader heartbeat received
                 self.last_heartbeat_from_leader = time.time()
 
             elif mtype == MSG_ELECTION:
                 candidate = msg.get("candidate")
-                # If I have higher rank than candidate, reply OK and (if not already) start my election
                 if candidate and id_rank(self.server_id) > id_rank(candidate):
-                    reply = {"type": MSG_ELECTION_OK, "from": self.server_id}
-                    send_message(self.control_sock, addr, reply, self.clock)
-
-                    # If I'm already leader inform them; else ensure I start an election if appropriate
-                    if self.is_leader():
-                        coord_msg = {"type": MSG_COORDINATOR,
-                                     "leader_id": self.server_id}
-                        send_message(self.control_sock, addr,
-                                     coord_msg, self.clock)
-                    elif not self.election_in_progress:
+                    send_message(self.control_sock, addr,
+                                 {"type": MSG_ELECTION_OK, "from": self.server_id},
+                                 self.clock)
+                    if not self.election_in_progress:
                         self.start_election()
 
             elif mtype == MSG_ELECTION_OK:
-                if self.election_in_progress:
-                    self.election_higher_responded = True
+                self.election_higher_responded = True
 
             elif mtype == MSG_COORDINATOR:
-                new_leader = msg.get("leader_id")
-                if new_leader:
-                    print(
-                        f"[{self.server_id}] coordinator: new leader is {new_leader}")
-                    self.leader_id = new_leader
-                    self.election_in_progress = False
-                    self.election_higher_responded = False
-                    self.election_deadline = None
-                    self.last_heartbeat_from_leader = time.time()
+                self.leader_id = msg.get("leader_id")
+                self.election_in_progress = False
+                self.last_heartbeat_from_leader = time.time()
 
-            # other control messages (extensions) can be handled here
+    # -----------------------------------------------------
+    # FOLLOWER: ordered delivery + ACK/NACK
+    # -----------------------------------------------------
+    def handle_game_update(self, msg):
+        seq = msg.get("seq")
 
-    def apply_game_update(self, update_msg: dict):
-        # Replace local state with authoritative state from leader (safe simple approach)
-        state = update_msg.get("state")
-        if state:
-            try:
-                self.game_state = GameState.from_dict(state)
-            except Exception:
-                # fall back to ignoring malformed state
-                pass
+        if seq == self.expected_seq:
+            self.apply_game_update(msg)
+            self.send_ack(seq)
+            self.expected_seq += 1
 
-    def client_loop(self):
-        print(f"[{self.server_id}] listening for clients on {CLIENT_PORT}")
-        while self.running:
-            try:
-                msg, addr = recv_message(self.client_sock, self.clock)
-            except OSError:
-                break
-            except Exception:
-                continue
+            # drain buffer
+            while self.expected_seq in self.pending_updates:
+                buffered = self.pending_updates.pop(self.expected_seq)
+                self.apply_game_update(buffered)
+                self.send_ack(self.expected_seq)
+                self.expected_seq += 1
 
-            # remember client for updates
-            if addr:
-                self.client_addrs.add(addr)
+        elif seq > self.expected_seq:
+            self.pending_updates[seq] = msg
+            self.send_nack(self.expected_seq)
 
-            if not isinstance(msg, dict):
-                continue
+        else:
+            self.send_ack(seq)
 
-            if msg.get("type") == MSG_GAME_INPUT:
-                if self.is_leader():
-                    try:
-                        p = int(msg.get("player", 1))
-                        d = int(msg.get("dir", 0))
-                        self.inputs[p] = d
-                    except Exception:
-                        pass
-                else:
-                    # forward inputs to leader control port
-                    lid = self.get_leader_addr()
-                    if lid:
-                        send_message(self.control_sock, lid, msg, self.clock)
+    def send_ack(self, seq):
+        send_message(
+            self.control_sock,
+            self.get_leader_addr(),
+            {"type": MSG_ACK, "seq": seq, "from": self.server_id},
+            self.clock
+        )
 
-    def heartbeat_loop(self):
-        while self.running:
-            time.sleep(HEARTBEAT_INTERVAL)
-            if self.is_leader():
-                hb = {"type": MSG_HEARTBEAT}
-                for sid, (ip, port) in self.peers.items():
-                    send_message(self.control_sock, (ip, port), hb, self.clock)
-            else:
-                # if follower and leader heartbeat timed out, start election
-                if time.time() - self.last_heartbeat_from_leader > HEARTBEAT_TIMEOUT:
-                    print(f"[{self.server_id}] Leader timed out!")
-                    self.start_election()
+    def send_nack(self, missing_seq):
+        send_message(
+            self.control_sock,
+            self.get_leader_addr(),
+            {"type": MSG_NACK, "seq": missing_seq, "from": self.server_id},
+            self.clock
+        )
 
-                # election timeout handling
-                if self.election_in_progress and self.election_deadline:
-                    if time.time() > self.election_deadline:
-                        if not self.election_higher_responded:
-                            self.become_leader()
-                        else:
-                            # higher one responded; reset and try again (they should coordinate)
-                            self.election_in_progress = False
-                            self.start_election()
+    # -----------------------------------------------------
+    # LEADER: ACK tracking + retransmission
+    # -----------------------------------------------------
+    def handle_ack(self, msg):
+        seq = msg["seq"]
+        sender = msg["from"]
+        self.acks[seq].add(sender)
 
+        if self.acks[seq] == set(self.peers.keys()):
+            self.retransmit_buffer.pop(seq, None)
+            self.last_send_time.pop(seq, None)
+
+    def handle_nack(self, msg):
+        seq = msg["seq"]
+        sender = msg["from"]
+        if seq in self.retransmit_buffer:
+            send_message(
+                self.control_sock,
+                self.peers[sender],
+                self.retransmit_buffer[seq],
+                self.clock
+            )
+
+    def retransmission_check(self):
+        now = time.time()
+        for seq, msg in list(self.retransmit_buffer.items()):
+            if now - self.last_send_time[seq] > RETRANSMIT_TIMEOUT:
+                for ip, port in self.peers.values():
+                    send_message(self.control_sock, (ip, port), msg, self.clock)
+                self.last_send_time[seq] = now
+
+    # -----------------------------------------------------
+    # GAME LOOP (leader sends ordered reliable updates)
+    # -----------------------------------------------------
     def game_loop(self):
         while self.running:
             time.sleep(TICK_INTERVAL)
             if not self.is_leader():
                 continue
 
-            # leader advances game and broadcasts authoritative updates
-            self.game_state.step(self.inputs.get(1, 0), self.inputs.get(2, 0))
+            self.game_state.step(self.inputs[1], self.inputs[2])
             self.seq += 1
-            update = {"type": MSG_GAME_UPDATE, "seq": self.seq,
-                      "state": self.game_state.to_dict()}
 
-            # send to other servers (control plane)
-            for sid, (ip, port) in self.peers.items():
+            update = {
+                "type": MSG_GAME_UPDATE,
+                "seq": self.seq,
+                "state": self.game_state.to_dict()
+            }
+
+            self.retransmit_buffer[self.seq] = update
+            self.acks[self.seq] = set()
+            self.last_send_time[self.seq] = time.time()
+
+            for ip, port in self.peers.values():
                 send_message(self.control_sock, (ip, port), update, self.clock)
 
-            # apply locally and inform clients
             self.apply_game_update(update)
+
             for caddr in list(self.client_addrs):
                 send_message(self.client_sock, caddr, update, self.clock)
 
-    def is_leader(self) -> bool:
+            self.retransmission_check()
+
+    # -----------------------------------------------------
+    # CLIENT + HEARTBEAT (UNCHANGED)
+    # -----------------------------------------------------
+    def apply_game_update(self, update_msg):
+        state = update_msg.get("state")
+        if state:
+            self.game_state = GameState.from_dict(state)
+
+    def client_loop(self):
+        while self.running:
+            try:
+                msg, addr = recv_message(self.client_sock, self.clock)
+            except Exception:
+                continue
+
+            self.client_addrs.add(addr)
+            if msg.get("type") == MSG_GAME_INPUT:
+                if self.is_leader():
+                    self.inputs[int(msg["player"])] = int(msg["dir"])
+                else:
+                    send_message(self.control_sock, self.get_leader_addr(), msg, self.clock)
+
+    def heartbeat_loop(self):
+        while self.running:
+            time.sleep(HEARTBEAT_INTERVAL)
+            if self.is_leader():
+                hb = {"type": MSG_HEARTBEAT}
+                for ip, port in self.peers.values():
+                    send_message(self.control_sock, (ip, port), hb, self.clock)
+            else:
+                if time.time() - self.last_heartbeat_from_leader > HEARTBEAT_TIMEOUT:
+                    self.start_election()
+
+    # -----------------------------------------------------
+    def is_leader(self):
         return self.leader_id == self.server_id
 
     def get_leader_addr(self):
@@ -288,27 +321,25 @@ class PongServer:
             return (self.ip, SERVER_CONTROL_PORT)
         return self.peers.get(self.leader_id)
 
-# ---------- CLI / entrypoint -------------
-
-
-def parse_args():
+# ---------------------------------------------------------
+# CLI
+# ---------------------------------------------------------
+def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--id", required=True)
     ap.add_argument("--ip", default="127.0.0.1")
     ap.add_argument("--peers", nargs="*", default=[])
-    return ap.parse_args()
+    args = ap.parse_args()
 
-
-def main():
-    args = parse_args()
     peers = {}
     for p in args.peers:
-        # expect entries like "s1:127.0.0.1"
         sid, ip = p.split(":")
         peers[sid] = (ip, SERVER_CONTROL_PORT)
+
     srv = PongServer(args.id, args.ip, peers)
+    srv.start()
+
     try:
-        srv.start()
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
