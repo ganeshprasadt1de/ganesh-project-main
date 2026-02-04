@@ -47,6 +47,22 @@ class PongServer:
         self.heartbeat_thread = threading.Thread(target=self.heartbeat_loop, daemon=True)
         self.game_thread = threading.Thread(target=self.game_loop, daemon=True)
 
+    # ================================
+    # NEW: MEMBERSHIP TABLE PRINTER
+    # ================================
+    def _print_membership(self):
+        print("\n===== MEMBERSHIP TABLE =====")
+        print(f"Self   : {self.server_id}")
+        print(f"Leader : {self.leader_id}")
+        if not self.peers:
+            print("Peers  : None")
+        else:
+            for sid, (ip, _) in self.peers.items():
+                role = "LEADER" if sid == self.leader_id else "FOLLOWER"
+                print(f"{sid} -> {ip} ({role})")
+        print("============================\n")
+    # ================================
+
     def start(self):
         print(f"[{self.server_id}] Starting server...")
         self.discovery_thread.start()
@@ -115,6 +131,9 @@ class PongServer:
         for _, addr in self.peers.items():
             send_message(self.control_sock, addr, msg)
 
+        # NEW: print membership after election finishes
+        self._print_membership()
+
     def is_leader(self):
         return self.leader_id == self.server_id
 
@@ -130,23 +149,18 @@ class PongServer:
             if t == MSG_JOIN:
                 new_id = msg.get("id")
                 if new_id and new_id != self.server_id:
-                    # 1. Add the new peer
                     if new_id not in self.peers:
                         print(f"Peer Joined: {new_id} from {addr[0]}")
                         self.peers[new_id] = (addr[0], SERVER_CONTROL_PORT)
-                        # Gossip: Tell others about this new peer
                         for pid, paddr in self.peers.items():
                             if pid != new_id:
                                 send_message(self.control_sock, addr, {"type": MSG_JOIN, "id": pid})
                                 send_message(self.control_sock, (paddr[0], SERVER_CONTROL_PORT), {"type": MSG_JOIN, "id": new_id})
 
-                    # 2. CRITICAL FIX: Split-Brain Prevention
-                    # If I am leader, but the new guy is bigger, I must abdicate.
                     if self.is_leader() and new_id > self.server_id:
                         print(f"Higher peer {new_id} joined. I am stepping down. Starting Election.")
                         self.start_election()
                     
-                    # If I am not leader, but the new guy is bigger than my current leader, trigger election
                     elif not self.is_leader() and new_id > self.leader_id:
                         print(f"Higher peer {new_id} joined (bigger than known leader {self.leader_id}). Starting Election.")
                         self.start_election()
@@ -155,7 +169,6 @@ class PongServer:
                 self.last_heartbeat_from_leader = time.time()
                 sender_id = msg.get("server_id")
                 
-                # Update leader if heartbeat comes from a higher ID
                 if sender_id and sender_id > self.leader_id:
                     self.leader_id = sender_id
                     
@@ -173,6 +186,9 @@ class PongServer:
                 self.election_active = False
                 self.last_heartbeat_from_leader = time.time()
                 print(f"New Leader Elected: {self.leader_id}")
+
+                # NEW: print membership after election finishes
+                self._print_membership()
 
             elif t == MSG_GAME_UPDATE and not self.is_leader():
                 if msg.get("state"):
@@ -217,12 +233,10 @@ class PongServer:
                             self.connected_players.add(pid)
                         self.inputs[pid] = int(msg.get("dir", 0))
                     else:
-                        # Forwarding logic
                         leader_addr = self.peers.get(self.leader_id)
                         if leader_addr:
                             send_message(self.control_sock, leader_addr, msg)
                         else:
-                            # Try to find who the leader is if not in peers map (shouldn't happen often)
                             pass
             except Exception:
                 continue
@@ -233,7 +247,6 @@ class PongServer:
             time.sleep(TICK_INTERVAL)
             if not self.is_leader(): continue
 
-            # DEBUG: Print status every 5 seconds so we know who is missing
             if time.time() - last_print > 5.0:
                 print(f"Game Status: Players Connected: {self.connected_players} (Need 2 to start)")
                 last_print = time.time()
