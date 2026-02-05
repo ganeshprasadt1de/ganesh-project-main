@@ -14,3 +14,9 @@ You can run multiple instances of the server on the same machine or different ma
 Open a terminal and run:
 ```bash
 python server.py
+
+
+Open another 2 terminals and run:
+python client.py --player 1
+
+python client.py --player 2
