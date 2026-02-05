@@ -15,8 +15,11 @@ Open a terminal and run:
 ```bash
 python server.py
 
+```
 
 Open another 2 terminals and run:
+```bash
 python client.py --player 1
 
 python client.py --player 2
+```
