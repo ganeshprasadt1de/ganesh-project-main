@@ -12,9 +12,19 @@ from common import (
 from game_state import GameState
 from discovery import server_discovery_listener, client_discover_servers
 
+
+# ================================
+# NEW: snapshot sync message types
+# ================================
+MSG_STATE_SNAPSHOT_REQUEST = "STATE_SNAPSHOT_REQUEST"
+MSG_STATE_SNAPSHOT_RESPONSE = "STATE_SNAPSHOT_RESPONSE"
+# ================================
+
+
 HEARTBEAT_INTERVAL = 1.0
 HEARTBEAT_TIMEOUT = 3.0
 TICK_INTERVAL = 0.05
+
 
 class PongServer:
     def __init__(self):
@@ -35,6 +45,13 @@ class PongServer:
         self.running = True
         self.election_active = False
 
+        # ================================
+        # NEW: snapshot sync storage
+        # ================================
+        self._snapshot_lock = threading.Lock()
+        self._snapshot_received = None
+        # ================================
+
         self.discovery_stop = threading.Event()
         self.discovery_thread = threading.Thread(
             target=server_discovery_listener,
@@ -46,6 +63,31 @@ class PongServer:
         self.client_thread = threading.Thread(target=self.client_loop, daemon=True)
         self.heartbeat_thread = threading.Thread(target=self.heartbeat_loop, daemon=True)
         self.game_thread = threading.Thread(target=self.game_loop, daemon=True)
+
+    # ================================
+    # NEW: snapshot request helper
+    # ================================
+    def _request_state_snapshot(self):
+        """
+        Ask peers for their current game state.
+        First response wins. Very small + non-invasive.
+        """
+        with self._snapshot_lock:
+            self._snapshot_received = None
+
+        req = {"type": MSG_STATE_SNAPSHOT_REQUEST}
+
+        for _, addr in self.peers.items():
+            send_message(self.control_sock, addr, req)
+
+        start = time.time()
+        while time.time() - start < 0.5:
+            with self._snapshot_lock:
+                if self._snapshot_received:
+                    self.game_state = GameState.from_dict(self._snapshot_received)
+                    break
+            time.sleep(0.01)
+    # ================================
 
     # ================================
     # NEW: MEMBERSHIP TABLE PRINTER
@@ -80,6 +122,9 @@ class PongServer:
         else:
             print("No peers found. I am the first server.")
 
+        if self.peers:
+            self._request_state_snapshot()
+
         all_ids = list(self.peers.keys()) + [self.server_id]
         self.leader_id = max(all_ids)
         print(f"[{self.server_id}] Initial leader: {self.leader_id}")
@@ -109,7 +154,8 @@ class PongServer:
             self.become_leader()
 
     def start_election(self):
-        if self.election_active: return
+        if self.election_active: 
+            return
         self.election_active = True
         higher = self.higher_peers()
         if not higher:
@@ -126,7 +172,17 @@ class PongServer:
         self.leader_id = self.server_id
         self.last_heartbeat_from_leader = time.time()
         self.election_active = False
+
         print(f"*** I AM LEADER NOW ({self.server_id}) ***")
+
+        # ================================
+        # NEW: pull latest game snapshot BEFORE acting as leader
+        # prevents score reset when higher UUID joins
+        # ================================
+        if self.peers:
+            self._request_state_snapshot()
+        # ================================
+
         msg = {"type": MSG_COORDINATOR, "leader_id": self.server_id}
         for _, addr in self.peers.items():
             send_message(self.control_sock, addr, msg)
@@ -145,7 +201,33 @@ class PongServer:
                 continue
 
             t = msg.get("type")
-            
+
+            # ================================
+            # NEW: snapshot request handler
+            # follower replies with its state
+            # ================================
+            if t == MSG_STATE_SNAPSHOT_REQUEST:
+                reply = {
+                    "type": MSG_STATE_SNAPSHOT_RESPONSE,
+                    "state": self.game_state.to_dict()
+                }
+                send_message(self.control_sock, addr, reply)
+                continue
+
+            elif t == MSG_STATE_SNAPSHOT_RESPONSE:
+                with self._snapshot_lock:
+                    state = msg.get("state")
+
+                    if state:
+                        s1 = state.get("score1", 0)
+                        s2 = state.get("score2", 0)
+
+                        # accept non-empty snapshot first (prevents reset from fresh server)
+                        if (s1 != 0 or s2 != 0) or self._snapshot_received is None:
+                            self._snapshot_received = state
+                continue
+            # ================================
+
             if t == MSG_JOIN:
                 new_id = msg.get("id")
                 if new_id and new_id != self.server_id:
@@ -157,10 +239,14 @@ class PongServer:
                                 send_message(self.control_sock, addr, {"type": MSG_JOIN, "id": pid})
                                 send_message(self.control_sock, (paddr[0], SERVER_CONTROL_PORT), {"type": MSG_JOIN, "id": new_id})
 
+                    if new_id > self.server_id:
+                        print(f"Higher peer {new_id} detected (higher than me). Starting Election.")
+                        self.start_election()
+
                     if self.is_leader() and new_id > self.server_id:
                         print(f"Higher peer {new_id} joined. I am stepping down. Starting Election.")
                         self.start_election()
-                    
+
                     elif not self.is_leader() and new_id > self.leader_id:
                         print(f"Higher peer {new_id} joined (bigger than known leader {self.leader_id}). Starting Election.")
                         self.start_election()
@@ -173,7 +259,7 @@ class PongServer:
                     self.leader_id = sender_id
                     
                 if sender_id and sender_id not in self.peers and sender_id != self.server_id:
-                     self.peers[sender_id] = (addr[0], SERVER_CONTROL_PORT)
+                    self.peers[sender_id] = (addr[0], SERVER_CONTROL_PORT)
 
             elif t == MSG_ELECTION:
                 candidate = msg.get("candidate")
@@ -190,13 +276,33 @@ class PongServer:
                 # NEW: print membership after election finishes
                 self._print_membership()
 
-            elif t == MSG_GAME_UPDATE and not self.is_leader():
-                if msg.get("state"):
-                    self.game_state = GameState.from_dict(msg.get("state"))
-                    update_msg = {"type": MSG_GAME_UPDATE, "state": self.game_state.to_dict()}
-                    for c in list(self.client_addrs):
-                        send_message(self.client_sock, c, update_msg)
+                # FIX 1: SURVIVOR PUSH - If I have a score, push it to the new leader
+                if self.game_state.score1 > 0 or self.game_state.score2 > 0:
+                    leader_addr = self.peers.get(self.leader_id)
+                    if leader_addr:
+                        send_message(self.control_sock, leader_addr, {"type": MSG_GAME_UPDATE, "state": self.game_state.to_dict()})
 
+            elif t == MSG_GAME_UPDATE:
+                # Case A: Follower updates normally
+                if not self.is_leader():
+                    if msg.get("state"):
+                        self.game_state = GameState.from_dict(msg.get("state"))
+                        update_msg = {"type": MSG_GAME_UPDATE, "state": self.game_state.to_dict()}
+                        for c in list(self.client_addrs):
+                            send_message(self.client_sock, c, update_msg)
+
+                # FIX 2: Leader accepts recovery state if currently fresh (0-0)
+                elif self.is_leader():
+                    remote_state = msg.get("state", {})
+                    if (remote_state.get("score1", 0) > 0 or remote_state.get("score2", 0) > 0):
+                        if self.game_state.score1 == 0 and self.game_state.score2 == 0:
+                            print(f"Leader: Recovering game state from survivor!")
+                            self.game_state = GameState.from_dict(remote_state)
+
+            # ================================
+            # LEADER-ONLY membership (unchanged logic,
+            # but now explicitly authoritative)
+            # ================================
             elif t == MSG_GAME_INPUT and self.is_leader():
                 pid = int(msg.get("player", 1))
                 if pid not in self.connected_players:
@@ -220,24 +326,27 @@ class PongServer:
         while self.running:
             try:
                 msg, addr = recv_message(self.client_sock)
+
+                # follower keeps addresses only for sending updates
                 if addr and addr not in self.client_addrs:
                     self.client_addrs.add(addr)
                     print(f"New Client Connected: {addr}")
-                
+
                 if msg.get("type") == MSG_GAME_INPUT:
                     pid = int(msg.get("player", 1))
-                    
+
                     if self.is_leader():
+                        # leader is single source of truth
                         if pid not in self.connected_players:
                             print(f"Leader: Player {pid} detected locally!")
                             self.connected_players.add(pid)
                         self.inputs[pid] = int(msg.get("dir", 0))
                     else:
+                        # followers ONLY forward (no local membership tracking)
                         leader_addr = self.peers.get(self.leader_id)
                         if leader_addr:
                             send_message(self.control_sock, leader_addr, msg)
-                        else:
-                            pass
+
             except Exception:
                 continue
     
@@ -245,7 +354,8 @@ class PongServer:
         last_print = time.time()
         while self.running:
             time.sleep(TICK_INTERVAL)
-            if not self.is_leader(): continue
+            if not self.is_leader():
+                continue
 
             if time.time() - last_print > 5.0:
                 print(f"Game Status: Players Connected: {self.connected_players} (Need 2 to start)")
@@ -253,13 +363,15 @@ class PongServer:
 
             if len(self.connected_players) >= 2:
                 self.game_state.step(self.inputs.get(1, 0), self.inputs.get(2, 0))
-            
+
             update = {"type": MSG_GAME_UPDATE, "state": self.game_state.to_dict()}
-            
+
             for _, addr in self.peers.items():
                 send_message(self.control_sock, addr, update)
             for c in list(self.client_addrs):
                 send_message(self.client_sock, c, update)
 
+
 if __name__ == "__main__":
     PongServer().start()
+
