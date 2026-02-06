@@ -52,6 +52,11 @@ class PongServer:
         self._snapshot_received = None
         # ================================
 
+        # ================================
+        # NEW: peer liveness timestamps (display only)
+        self._last_seen = {}
+        # ================================
+
         self.discovery_stop = threading.Event()
         self.discovery_thread = threading.Thread(
             target=server_discovery_listener,
@@ -101,6 +106,13 @@ class PongServer:
         else:
             for sid, (ip, _) in self.peers.items():
                 role = "LEADER" if sid == self.leader_id else "FOLLOWER"
+                # ================================
+                # NEW: display-only liveness filter
+                now = time.time()
+                last = self._last_seen.get(sid, 0)
+                if now - last > HEARTBEAT_TIMEOUT * 2:
+                    continue
+                # ================================
                 print(f"{sid} -> {ip} ({role})")
         print("============================\n")
     # ================================
@@ -201,6 +213,14 @@ class PongServer:
                 continue
 
             t = msg.get("type")
+
+            # ================================
+            # NEW: update liveness ONLY on heartbeat
+            if t == MSG_HEARTBEAT:
+                sid = msg.get("server_id")
+                if sid:
+                    self._last_seen[sid] = time.time()
+            # ================================
 
             # ================================
             # NEW: snapshot request handler
@@ -317,10 +337,34 @@ class PongServer:
                 hb = {"type": MSG_HEARTBEAT, "server_id": self.server_id}
                 for _, addr in self.peers.items():
                     send_message(self.control_sock, addr, hb)
-            else:
+
+            # ================================
+            # NEW: followers also send heartbeat (keep-alive)
+            if not self.is_leader():
+                hb = {"type": MSG_HEARTBEAT, "server_id": self.server_id}
+                for _, addr in self.peers.items():
+                    send_message(self.control_sock, addr, hb)
+            # ================================
+
+            # ================================
+            # NEW: prune stale peers (ACTIVE CLEANUP)
+            now = time.time()
+            stale = [
+                sid for sid, last in self._last_seen.items()
+                if now - last > HEARTBEAT_TIMEOUT * 2
+            ]
+            for sid in stale:
+                if sid in self.peers:
+                    print(f"Pruning dead peer: {sid}")
+                    self.peers.pop(sid, None)
+                self._last_seen.pop(sid, None)
+            # ================================
+
+            if not self.is_leader():
                 if time.time() - self.last_heartbeat_from_leader > HEARTBEAT_TIMEOUT:
                     print("Leader timeout! Starting election.")
                     self.start_election()
+
 
     def client_loop(self):
         while self.running:
