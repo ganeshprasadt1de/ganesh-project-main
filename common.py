@@ -19,20 +19,24 @@ MSG_DISCOVER_RESPONSE = "DISCOVER_RESPONSE"
 
 def make_udp_socket(bind_ip: str = "0.0.0.0", bind_port: Optional[int] = 0, broadcast: bool = False) -> socket.socket:
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    # Set SO_REUSEADDR before binding to allow quick restarts
     try:
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     except Exception:
         pass
+    # Set SO_REUSEPORT on systems that support it (Linux, BSD, macOS)
     try:
         if hasattr(socket, "SO_REUSEPORT"):
             s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
     except Exception:
         pass
+    # Enable broadcast if requested
     if broadcast:
         try:
             s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         except Exception:
             pass
+    # Bind the socket if a port is specified
     if bind_port is not None:
         s.bind((bind_ip, bind_port))
     return s

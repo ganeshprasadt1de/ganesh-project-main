@@ -332,6 +332,9 @@ class PongServer:
 
     def start_election(self):
         """Start election with cooldown and 2-server special case."""
+        # Cancel any pending timer first to prevent election spam
+        self._cancel_finalize_timer()
+        
         # Check election cooldown (use monotonic time)
         now = time.monotonic()
         if now - self.last_election_time < ELECTION_COOLDOWN:
@@ -356,6 +359,7 @@ class PongServer:
                 return
         
         if self.election_active:
+            print(f"Election already in progress. Skipping.")
             return
 
         self.election_active = True
