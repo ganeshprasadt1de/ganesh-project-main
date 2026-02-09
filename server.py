@@ -300,7 +300,6 @@ class PongServer:
                 if sid != self.server_id:
                     self.peers[sid] = (sip, SERVER_CONTROL_PORT)
                     join_msg = {"type": MSG_JOIN, "id": self.server_id}
-                    print(f"[{self.server_id}] Sending JOIN to {sid} at {sip}")
                     send_message(self.control_sock, (sip, SERVER_CONTROL_PORT), join_msg)
         else:
             print("No peers found. I am the first server.")
@@ -440,7 +439,6 @@ class PongServer:
         return self.leader_id == self.server_id
 
     def control_loop(self):
-        print(f"[{self.server_id}] Control loop started")
         while self.running:
             try:
                 msg, addr = recv_message(self.control_sock)
@@ -543,7 +541,6 @@ class PongServer:
 
             if t == MSG_JOIN:
                 new_id = msg.get("id")
-                print(f"[{self.server_id}] Received JOIN from {new_id}")
 
                 if new_id and new_id != self.server_id:
                     if new_id not in self.peers:
@@ -744,7 +741,6 @@ class PongServer:
                 room.apply_input(pid, direction)
 
     def heartbeat_loop(self):
-        print(f"[{self.server_id}] Heartbeat loop started")
         while self.running:
             time.sleep(HEARTBEAT_INTERVAL)
 
@@ -756,9 +752,6 @@ class PongServer:
                 if peers_snapshot:
                     for _, addr in peers_snapshot:
                         send_message(self.control_sock, addr, hb)
-                # Occasional debug logging
-                if int(time.time()) % 10 == 0:
-                    print(f"[{self.server_id}] Leader sending heartbeats to {len(peers_snapshot)} peers")
 
                 # Retry coordinator message if peers haven't ACKed
                 if self.pending_acks and self._last_control_msg:
