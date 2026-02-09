@@ -778,7 +778,21 @@ class PongServer:
 
             # Check for leader timeout (followers only)
             if not self.is_leader():
-                if time.monotonic() - self.last_heartbeat_from_leader > self.timeout_with_jitter:
+                time_since_last_hb = time.monotonic() - self.last_heartbeat_from_leader
+                
+                # If we haven't received heartbeat recently, periodically re-announce to leader
+                # This helps in case our initial JOIN was lost (e.g., due to SO_REUSEPORT)
+                leader_addr = self.peers.get(self.leader_id)
+                if leader_addr and time_since_last_hb > HEARTBEAT_INTERVAL * 2:
+                    # Re-send JOIN every few heartbeat intervals if not receiving from leader
+                    # Only do this if we haven't fully timed out yet
+                    if time_since_last_hb < self.timeout_with_jitter:
+                        # Re-send JOIN to make sure leader knows about us
+                        join_msg = {"type": MSG_JOIN, "id": self.server_id}
+                        send_message(self.control_sock, leader_addr, join_msg)
+                
+                # If we've fully timed out, start election
+                if time_since_last_hb > self.timeout_with_jitter:
                     print("Leader timeout! Starting election.")
                     self.start_election()
 
