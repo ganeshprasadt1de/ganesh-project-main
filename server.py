@@ -285,6 +285,12 @@ class PongServer:
         print(f"[{self.server_id}] Starting server...")
         self.discovery_thread.start()
 
+        # Start control thread BEFORE discovery so we can receive JOIN messages
+        self.control_thread.start()
+        self.client_thread.start()
+        self.heartbeat_thread.start()
+        self.game_thread.start()
+
         print("Scanning for peers...")
         found = client_discover_servers(timeout=2.0)
 
@@ -294,6 +300,7 @@ class PongServer:
                 if sid != self.server_id:
                     self.peers[sid] = (sip, SERVER_CONTROL_PORT)
                     join_msg = {"type": MSG_JOIN, "id": self.server_id}
+                    print(f"[{self.server_id}] Sending JOIN to {sid} at {sip}")
                     send_message(self.control_sock, (sip, SERVER_CONTROL_PORT), join_msg)
         else:
             print("No peers found. I am the first server.")
@@ -313,11 +320,6 @@ class PongServer:
         all_ids = list(self.peers.keys()) + [self.server_id]
         self.leader_id = max(all_ids)
         print(f"[{self.server_id}] Initial leader: {self.leader_id}")
-
-        self.control_thread.start()
-        self.client_thread.start()
-        self.heartbeat_thread.start()
-        self.game_thread.start()
 
         try:
             while self.running:
@@ -541,6 +543,7 @@ class PongServer:
 
             if t == MSG_JOIN:
                 new_id = msg.get("id")
+                print(f"[{self.server_id}] Received JOIN from {new_id}")
 
                 if new_id and new_id != self.server_id:
                     if new_id not in self.peers:
@@ -558,15 +561,15 @@ class PongServer:
                                     {"type": MSG_JOIN, "id": new_id}
                                 )
 
-                    # Only trigger election if higher peer joins and we're leader or follower with lower leader
-                    if self.is_leader() and new_id > self.server_id:
-                        print(f"Higher peer {new_id} joined. I am stepping down. Starting Election.")
-                        self.start_election()
-                    elif not self.is_leader() and new_id > self.leader_id:
-                        print(
-                            f"Higher peer {new_id} joined (bigger than known leader {self.leader_id}). Starting Election."
-                        )
-                        self.start_election()
+                        # Only trigger election if higher peer joins and we're leader or follower with lower leader
+                        if self.is_leader() and new_id > self.server_id:
+                            print(f"Higher peer {new_id} joined. I am stepping down. Starting Election.")
+                            self.start_election()
+                        elif not self.is_leader() and new_id > self.leader_id:
+                            print(
+                                f"Higher peer {new_id} joined (bigger than known leader {self.leader_id}). Starting Election."
+                            )
+                            self.start_election()
 
             elif t == MSG_ELECTION:
                 candidate = msg.get("candidate")
@@ -609,7 +612,13 @@ class PongServer:
                 # Cancel any pending finalize timer
                 self._cancel_finalize_timer()
                 
-                self.leader_id = msg.get("leader_id")
+                leader_id_from_msg = msg.get("leader_id")
+                
+                # Ignore coordinator messages from ourselves
+                if leader_id_from_msg == self.server_id:
+                    continue
+                
+                self.leader_id = leader_id_from_msg
                 self.election_active = False
                 self.last_heartbeat_from_leader = time.monotonic()
                 # Set jitter for follower timeout
