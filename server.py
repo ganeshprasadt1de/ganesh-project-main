@@ -397,6 +397,11 @@ class PongServer:
         for _, addr in self.peers.items():
             send_message(self.control_sock, addr, msg)
 
+        # Send immediate heartbeat to prevent timeout
+        hb = {"type": MSG_HEARTBEAT, "server_id": self.server_id}
+        for _, addr in self.peers.items():
+            send_message(self.control_sock, addr, hb)
+
         self._print_membership()
 
     def is_leader(self):

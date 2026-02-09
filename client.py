@@ -38,50 +38,31 @@ class PongClient:
         """Blocking search for a server."""
         print(f"[CLIENT {self.player}] Scanning for servers...")
         while True:
-            # Check for quit events so we don't hang if user closes window during search
-            if pygame.get_init():
-                for event in pygame.event.get():
-                    if event.type == pygame.QUIT:
-                        self.running = False
-                        return None
-
-            found = client_discover_servers(timeout=1.0) # Short timeout for responsiveness
+            found = client_discover_servers(timeout=1.0)
             if found:
                 sid, sip = found[0]
-                print(f"[CLIENT] Found server {sid} at {sip}")
+                print(f"[CLIENT {self.player}] Found server {sid} at {sip}")
                 return (sip, CLIENT_PORT)
             
-            # Optional: Visual feedback in console
-            print(".", end="", flush=True)
-
-    def _reconnect(self):
-        """Called when connection is lost. Silently reconnects without spam."""
-        print(f"\n[CLIENT {self.player}] Connection lost! Searching for server...")
-        self.server_addr = None
-        self.waiting_for_players = True
-        self.both_players_ready = False
-        
-        while self.server_addr is None and self.running:
-            # Attempt discovery (silent retries)
-            self.server_addr = self._find_server()
-            if self.server_addr is None:
-                time.sleep(0.5)  # Wait before retrying
-        
-        # Once found, announce presence immediately
-        if self.server_addr:
-            self.last_update_time = time.time()
-            self._announce()
+            # Brief pause before retry
+            time.sleep(0.5)
 
     def start(self):
         # Initial connection (no pygame window yet)
-        print(f"[CLIENT {self.player}] Connecting to server...")
-        self.server_addr = self._find_server()
-        if self.server_addr:
+        while self.running:
+            print(f"[CLIENT {self.player}] Connecting to server...")
+            self.server_addr = self._find_server()
+            if not self.server_addr:
+                continue
+                
             self.last_update_time = time.time()
             self._announce()
             
             # Wait for both players before opening pygame window
             print(f"[CLIENT {self.player}] Waiting for both players to join...")
+            self.waiting_for_players = True
+            self.both_players_ready = False
+            
             while self.waiting_for_players and self.running:
                 # Check for state updates
                 self.sock.settimeout(0.1)
@@ -105,15 +86,19 @@ class PongClient:
                 
                 # Check for server timeout during waiting
                 if time.time() - self.last_update_time > SERVER_TIMEOUT:
-                    self._reconnect()
+                    print(f"[CLIENT {self.player}] Server timeout during waiting, reconnecting...")
+                    break  # Break inner loop to reconnect
                 
                 # Send periodic inputs to keep connection alive
                 self.send_input(0)
                 time.sleep(0.5)
             
-            # Now start the actual game loop with pygame
+            # If both players ready, start the game loop
             if self.both_players_ready:
                 self.game_loop()
+                # If game loop exits due to timeout, we'll reconnect
+                if self.running:
+                    continue  # Reconnect and wait again
 
     def _announce(self):
         if self.server_addr:
@@ -193,13 +178,9 @@ class PongClient:
         while self.running:
             # 1. Check Watchdog (Fault Tolerance)
             if time.time() - self.last_update_time > SERVER_TIMEOUT:
-                print(f"[CLIENT {self.player}] Server timeout, reconnecting...")
+                print(f"[CLIENT {self.player}] Server timeout detected")
                 pygame.quit()
-                self._reconnect()
-                # After reconnecting, need to wait for players again
-                self.waiting_for_players = True
-                self.both_players_ready = False
-                return  # Exit game_loop, will be restarted by start()
+                return  # Exit game_loop to reconnect in start()
 
             # 2. Event Handling
             for event in pygame.event.get():
