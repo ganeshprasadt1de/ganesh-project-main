@@ -514,14 +514,10 @@ class PongServer:
                                     {"type": MSG_JOIN, "id": new_id}
                                 )
 
-                    if new_id > self.server_id:
-                        print(f"Higher peer {new_id} detected (higher than me). Starting Election.")
-                        self.start_election()
-
+                    # Only trigger election if higher peer joins and we're leader or follower with lower leader
                     if self.is_leader() and new_id > self.server_id:
                         print(f"Higher peer {new_id} joined. I am stepping down. Starting Election.")
                         self.start_election()
-
                     elif not self.is_leader() and new_id > self.leader_id:
                         print(
                             f"Higher peer {new_id} joined (bigger than known leader {self.leader_id}). Starting Election."
@@ -648,10 +644,15 @@ class PongServer:
                             send_message(self.client_sock, c, update_msg)
 
                 elif self.is_leader():
-                    # ALWAYS accept authoritative snapshot (no condition)
+                    # Accept authoritative snapshot from followers during recovery
                     for rid, state in rooms.items():
                         room = self._get_room(int(rid))
-                        room.restore(state)
+                        incoming_seq = state.get("seq", -1)
+                        # Only accept if the incoming state is more recent
+                        if incoming_seq > room.seq:
+                            room.restore(state.get("state"))
+                            room.seq = incoming_seq
+                            print(f"Leader: Recovered room {rid} state from follower (seq={incoming_seq})")
 
             # =====================================================
             # LEADER-ONLY input handling (NOW SHARDED)
