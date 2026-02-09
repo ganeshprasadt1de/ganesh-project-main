@@ -188,7 +188,8 @@ class PongServer:
 
         req = {"type": MSG_STATE_SNAPSHOT_REQUEST}
 
-        for _, addr in self.peers.items():
+        # Create a snapshot of peers to avoid RuntimeError
+        for _, addr in list(self.peers.items()):
             send_message(self.control_sock, addr, req)
 
         start = time.time()
@@ -209,7 +210,8 @@ class PongServer:
 
         req = {"type": MSG_STATE_SNAPSHOT_REQUEST, "rooms": True}
 
-        for _, addr in self.peers.items():
+        # Create a snapshot of peers to avoid RuntimeError
+        for _, addr in list(self.peers.items()):
             send_message(self.control_sock, addr, req)
 
         start = time.time()
@@ -247,10 +249,12 @@ class PongServer:
         print("\n===== MEMBERSHIP TABLE =====")
         print(f"Self   : {self.server_id}")
         print(f"Leader : {self.leader_id}")
-        if not self.peers:
+        # Create a snapshot of peers to avoid RuntimeError
+        peers_snapshot = list(self.peers.items())
+        if not peers_snapshot:
             print("Peers  : None")
         else:
-            for sid, (ip, _) in self.peers.items():
+            for sid, (ip, _) in peers_snapshot:
                 role = "LEADER" if sid == self.leader_id else "FOLLOWER"
 
                 now = time.time()
@@ -312,7 +316,8 @@ class PongServer:
         self.client_sock.close()
 
     def higher_peers(self):
-        return {sid: addr for sid, addr in self.peers.items() if sid > self.server_id}
+        # Create a snapshot to avoid RuntimeError
+        return {sid: addr for sid, addr in list(self.peers.items()) if sid > self.server_id}
 
     def _finalize_election(self):
         """Finalize election after timeout. Guard against race conditions."""
@@ -397,12 +402,14 @@ class PongServer:
 
         self.pending_acks = set(self.peers.keys())
         self._last_control_msg = msg
-        for _, addr in self.peers.items():
+        # Create a snapshot of peers to avoid RuntimeError
+        for _, addr in list(self.peers.items()):
             send_message(self.control_sock, addr, msg)
 
         # Send immediate heartbeat to prevent timeout
         hb = {"type": MSG_HEARTBEAT, "server_id": self.server_id}
-        for _, addr in self.peers.items():
+        # Create a snapshot of peers to avoid RuntimeError
+        for _, addr in list(self.peers.items()):
             send_message(self.control_sock, addr, hb)
 
         self._print_membership()
@@ -430,9 +437,22 @@ class PongServer:
                     self.last_heartbeat_from_leader = time.monotonic()
                     # Reset jitter when receiving leader heartbeat
                     self.timeout_with_jitter = HEARTBEAT_TIMEOUT + random.uniform(0, 1.0)
+                elif sid and sid > self.leader_id:
+                    # A higher ID peer is claiming leadership, accept it
+                    self._last_seen[sid] = time.time()
+                    self.leader_id = sid
+                    self.last_heartbeat_from_leader = time.monotonic()
+                    self.timeout_with_jitter = HEARTBEAT_TIMEOUT + random.uniform(0, 1.0)
+                    print(f"Higher ID peer {sid} is now leader")
+                    # Add unknown peers to membership
+                    if sid not in self.peers and sid != self.server_id:
+                        self.peers[sid] = (addr[0], SERVER_CONTROL_PORT)
                 elif sid:
                     # Still track other peers for membership, but don't reset leader timeout
                     self._last_seen[sid] = time.time()
+                    # Add unknown peers to membership
+                    if sid not in self.peers and sid != self.server_id:
+                        self.peers[sid] = (addr[0], SERVER_CONTROL_PORT)
 
             elif t == MSG_ACK:
                 sid = msg.get("server_id")
@@ -510,7 +530,9 @@ class PongServer:
                         print(f"Peer Joined: {new_id} from {addr[0]}")
                         self.peers[new_id] = (addr[0], SERVER_CONTROL_PORT)
 
-                        for pid, paddr in self.peers.items():
+                        # Create a snapshot of peers to avoid RuntimeError
+                        peers_snapshot = list(self.peers.items())
+                        for pid, paddr in peers_snapshot:
                             if pid != new_id:
                                 send_message(self.control_sock, addr, {"type": MSG_JOIN, "id": pid})
                                 send_message(
@@ -529,23 +551,19 @@ class PongServer:
                         )
                         self.start_election()
 
-            elif t == MSG_HEARTBEAT:
-                sender_id = msg.get("server_id")
-
-                # Update leader if higher ID is sending heartbeats
-                if sender_id and sender_id > self.leader_id:
-                    self.leader_id = sender_id
-
-                # Add unknown peers to membership
-                if sender_id and sender_id not in self.peers and sender_id != self.server_id:
-                    self.peers[sender_id] = (addr[0], SERVER_CONTROL_PORT)
-
             elif t == MSG_ELECTION:
                 candidate = msg.get("candidate")
 
                 if candidate and self.server_id > candidate:
                     send_message(self.control_sock, addr, {"type": MSG_ELECTION_OK})
                     self.start_election()
+
+            elif t == MSG_ELECTION_OK:
+                # Cancel any pending finalize timer to prevent split brain
+                # A higher peer is taking over, so we should not become leader
+                self._cancel_finalize_timer()
+                self.election_active = False
+                print(f"Received ELECTION_OK from higher peer. Stepping down from election.")
 
             elif t == MSG_COORDINATOR:
                 # Cancel any pending finalize timer
@@ -683,7 +701,8 @@ class PongServer:
             # Only leader sends heartbeats
             if self.is_leader():
                 hb = {"type": MSG_HEARTBEAT, "server_id": self.server_id}
-                for _, addr in self.peers.items():
+                # Create a snapshot of peers to avoid RuntimeError
+                for _, addr in list(self.peers.items()):
                     send_message(self.control_sock, addr, hb)
 
                 # Retry coordinator message if peers haven't ACKed
@@ -697,8 +716,9 @@ class PongServer:
             # NEW: prune stale peers based on heartbeat timeout
             # =====================================================
             now = time.time()
+            # Create snapshot of _last_seen to avoid RuntimeError
             stale = [
-                sid for sid, last in self._last_seen.items()
+                sid for sid, last in list(self._last_seen.items())
                 if now - last > HEARTBEAT_TIMEOUT * 2
             ]
 
@@ -792,7 +812,8 @@ class PongServer:
 
                     # notify followers to delete room
                     close_msg = {"type": MSG_CLOSE_ROOM, "room_id": rid}
-                    for _, addr in self.peers.items():
+                    # Create a snapshot of peers to avoid RuntimeError
+                    for _, addr in list(self.peers.items()):
                         send_message(self.control_sock, addr, close_msg)
 
                     rooms_to_close.append(rid)
@@ -827,7 +848,8 @@ class PongServer:
                     "rooms": self._rooms_snapshot()
                 }
 
-                for _, addr in self.peers.items():
+                # Create a snapshot of peers to avoid RuntimeError
+                for _, addr in list(self.peers.items()):
                     send_message(self.control_sock, addr, rooms_update)
 
 

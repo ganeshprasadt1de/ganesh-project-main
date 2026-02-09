@@ -15,7 +15,7 @@ BLACK = (0, 0, 0)
 RED = (255, 0, 0)
 
 # Timeout in seconds before client decides server is dead
-SERVER_TIMEOUT = 6.0  # Increased to match server timeout 
+SERVER_TIMEOUT = 3.0  # Reduced from 6.0 for faster failover 
 
 class PongClient:
     def __init__(self, player: int):
