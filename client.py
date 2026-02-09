@@ -1,3 +1,4 @@
+import sys
 import argparse
 import pygame
 import time
@@ -26,7 +27,8 @@ class PongClient:
         self.font = None 
         
         # FAULT TOLERANCE: Track when we last heard from server
-        self.last_update_time = 0 
+        self.last_update_time = 0
+        self.last_seq = -1
 
     def _find_server(self):
         """Blocking search for a server."""
@@ -89,16 +91,35 @@ class PongClient:
             send_message(self.sock, self.server_addr, {"type": MSG_GAME_INPUT, "player": self.player, "dir": direction})
 
     def receive_updates(self):
-        self.sock.settimeout(0.001)
-        try:
-            msg, _ = recv_message(self.sock)
-        except Exception:
-            return
+        self.sock.settimeout(0.001)     
+        while True:
+            try:
+                # Keep reading until the socket raises an exception (is empty)
+                msg, _ = recv_message(self.sock)
+                
+                # Update state if valid
+                if msg.get("type") == MSG_GAME_UPDATE:
+                    seq = msg.get("seq", -1)
 
-        if msg.get("type") == MSG_GAME_UPDATE:
-            self.state = msg.get("state")
-            # FAULT TOLERANCE: Update watchdog timestamp
-            self.last_update_time = time.time()
+                    # Only process if this packet is newer than what we have
+                    if seq > self.last_seq:
+                        self.last_seq = seq
+                        self.state = msg.get("state")
+                        # Update watchdog
+                        self.last_update_time = time.time()
+
+                # =====================================================
+                # POISON PILL → terminate client immediately
+                # =====================================================
+                elif msg.get("type") == "GAME_OVER":
+                    print("Game Over. Closing client.")
+                    pygame.quit()
+                    sys.exit(0)
+                # =====================================================
+            
+            except Exception:
+                # No more data in the socket buffer, break the loop
+                break
 
     def draw(self, screen):
         if not self.state:

@@ -26,11 +26,16 @@ MSG_STATE_SNAPSHOT_RESPONSE = "STATE_SNAPSHOT_RESPONSE"
 # =====================================================
 MSG_ROOMS_UPDATE = "ROOMS_UPDATE"
 # =====================================================
+MSG_ACK = "ACK"
+MSG_NACK = "NACK"
 
+MSG_CLOSE_ROOM = "CLOSE_ROOM"
+MSG_GAME_OVER = "GAME_OVER"
+WIN_SCORE = 3
 
 HEARTBEAT_INTERVAL = 1.0
 HEARTBEAT_TIMEOUT = 3.0
-TICK_INTERVAL = 0.05
+TICK_INTERVAL = 0.016
 
 
 # =====================================================
@@ -41,6 +46,8 @@ class PongRoom:
     def __init__(self, room_id: int):
         self.room_id = room_id
         self.game_state = GameState()
+        self.seq = 0
+        self.last_seen_seq = -1
 
         # identical fields to original server but scoped
         self.inputs = {}
@@ -54,6 +61,7 @@ class PongRoom:
                 self.inputs.get(1, 0),
                 self.inputs.get(2, 0)
             )
+            self.seq += 1
 
     def apply_input(self, pid: int, direction: int):
         # normalize GLOBAL pid -> LOCAL (1 or 2)
@@ -123,6 +131,14 @@ class PongServer:
         # ================================
         self._last_seen = {}
         # ================================
+        # =====================================================
+        # RELIABILITY ADDITIONS
+        # pending_acks -> peers we are waiting ACKs from
+        # _last_control_msg -> last critical control packet to retry
+        # =====================================================
+        self.pending_acks: Set[str] = set()
+        self._last_control_msg = None
+        # =====================================================
 
         self.discovery_stop = threading.Event()
         self.discovery_thread = threading.Thread(
@@ -197,7 +213,9 @@ class PongServer:
                 if self._rooms_snapshot_received:
                     for rid, state in self._rooms_snapshot_received.items():
                         room = self._get_room(int(rid))
-                        room.restore(state)
+                        room.restore(state.get("state"))
+                        room.seq = state.get("seq", 0)
+                        room.last_seen_seq = room.seq
                     break
             time.sleep(0.01)
 
@@ -207,7 +225,14 @@ class PongServer:
     def _rooms_snapshot(self):
         snap = {}
         for rid, room in self.rooms.items():
-            snap[rid] = room.snapshot()
+            snap[rid] = {
+                # =====================================================
+                # SEQUENCER ADDITION
+                # Attach ordering version to each room snapshot
+                # =====================================================
+                "seq": room.seq,
+                "state": room.snapshot()
+            }
         return snap
 
     # ================================
@@ -327,6 +352,9 @@ class PongServer:
             self._request_rooms_snapshot()
 
         msg = {"type": MSG_COORDINATOR, "leader_id": self.server_id}
+
+        self.pending_acks = set(self.peers.keys())
+        self._last_control_msg = msg
         for _, addr in self.peers.items():
             send_message(self.control_sock, addr, msg)
 
@@ -351,6 +379,49 @@ class PongServer:
                 sid = msg.get("server_id")
                 if sid:
                     self._last_seen[sid] = time.time()
+
+            elif t == MSG_ACK:
+                sid = msg.get("server_id")
+                if sid in self.pending_acks:
+                    self.pending_acks.discard(sid)
+                continue
+
+
+            elif t == MSG_NACK and self.is_leader():
+                rid = msg.get("room_id")
+                sid = msg.get("server_id")
+
+                addr = self.peers.get(sid)
+                if addr and rid is not None:
+                    room = self._get_room(int(rid))
+
+                    resend = {
+                        "type": MSG_ROOMS_UPDATE,
+                        "rooms": {
+                            rid: {
+                                "seq": room.seq,
+                                "state": room.snapshot()
+                            }
+                        }
+                    }
+
+                    send_message(self.control_sock, addr, resend)
+
+                continue
+
+            # =====================================================
+            # ROOM LIFECYCLE ADDITION
+            # follower deletes finished room when leader commands
+            # =====================================================
+            elif t == MSG_CLOSE_ROOM:
+                rid = msg.get("room_id")
+                if rid in self.rooms:
+                    print(f"Closing room {rid} (leader request)")
+                    self.rooms.pop(rid, None)
+                continue
+            # =====================================================
+
+
 
             # =====================================================
             # NEW: snapshot request handler (ROOMS + legacy)
@@ -430,6 +501,10 @@ class PongServer:
                 self.election_active = False
                 self.last_heartbeat_from_leader = time.time()
 
+                # Immediately acknowledge leader announcement
+                ack = {"type": MSG_ACK, "server_id": self.server_id}
+                send_message(self.control_sock, addr, ack)
+
                 print(f"New Leader Elected: {self.leader_id}")
                 self._print_membership()
 
@@ -489,11 +564,30 @@ class PongServer:
                 if not self.is_leader():
                     for rid, state in rooms.items():
                         room = self._get_room(int(rid))
-                        room.restore(state)
+                        incoming_seq = state.get("seq", -1)
+
+
+                        expected = room.last_seen_seq + 1
+                        if incoming_seq > expected:
+                            nack = {
+                                "type": MSG_NACK,
+                                "server_id": self.server_id,
+                                "room_id": rid,
+                                "expected_seq": expected
+                            }
+                            send_message(self.control_sock, addr, nack)
+
+
+                        if incoming_seq > room.seq:
+                            room.seq = incoming_seq
+                            room.restore(state.get("state"))
+
+                            room.last_seen_seq = incoming_seq
 
                         # forward ONLY to that room's clients
                         update_msg = {
                             "type": MSG_GAME_UPDATE,
+                            "seq": room.seq,   # propagate ordering to clients
                             "state": room.game_state.to_dict()
                         }
 
@@ -534,6 +628,12 @@ class PongServer:
                 hb = {"type": MSG_HEARTBEAT, "server_id": self.server_id}
                 for _, addr in self.peers.items():
                     send_message(self.control_sock, addr, hb)
+
+            if self.is_leader() and self.pending_acks and self._last_control_msg:
+                for sid in list(self.pending_acks):
+                    addr = self.peers.get(sid)
+                    if addr:
+                        send_message(self.control_sock, addr, self._last_control_msg)
 
             # =====================================================
             # NEW: prune stale peers (same logic preserved)
@@ -611,19 +711,52 @@ class PongServer:
             # =====================================================
             # NEW: per-room simulation + targeted client updates
             # =====================================================
+            rooms_to_close = []
             for rid, room in self.rooms.items():
 
                 # step only that room
                 room.step()
 
+                # WIN CONDITION CHECK (LEADER ONLY)
+                # =====================================================
+                if (room.game_state.score1 >= WIN_SCORE or
+                    room.game_state.score2 >= WIN_SCORE):
+
+                    print(f"Room {rid} finished. Closing room.")
+
+                    # POISON PILL → immediately kill clients in this room
+                    # =====================================================
+                    game_over_msg = {"type": MSG_GAME_OVER}
+                    for c in list(room.client_addrs):
+                        send_message(self.client_sock, c, game_over_msg)
+                    # =====================================================
+
+                    # notify followers to delete room
+                    close_msg = {"type": MSG_CLOSE_ROOM, "room_id": rid}
+                    for _, addr in self.peers.items():
+                        send_message(self.control_sock, addr, close_msg)
+
+                    rooms_to_close.append(rid)
+                    continue
+                # =============
+
                 update = {
                     "type": MSG_GAME_UPDATE,
+                    "seq": room.seq,
                     "state": room.game_state.to_dict()
+                    
                 }
 
                 # send only to clients in that room
                 for c in list(room.client_addrs):
                     send_message(self.client_sock, c, update)
+
+            # =====================================================
+            # actually delete finished rooms locally
+            # =====================================================
+            for rid in rooms_to_close:
+                self.rooms.pop(rid, None)
+            # =====================================================
 
             # =====================================================
             # NEW: replicate FULL rooms snapshot to followers
