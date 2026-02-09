@@ -1,6 +1,7 @@
 import uuid
 import threading
 import time
+import random
 from typing import Dict, Tuple, Set
 
 from common import (
@@ -34,8 +35,9 @@ MSG_GAME_OVER = "GAME_OVER"
 WIN_SCORE = 3
 
 HEARTBEAT_INTERVAL = 1.0
-HEARTBEAT_TIMEOUT = 3.0
+HEARTBEAT_TIMEOUT = 5.0  # Increased from 3.0 to reduce false positives
 TICK_INTERVAL = 0.016
+ELECTION_COOLDOWN = 3.0  # Prevent repeated elections
 
 
 # =====================================================
@@ -109,9 +111,12 @@ class PongServer:
         self.connected_players = set()
         self.client_addrs: Set[Tuple[str, int]] = set()
 
-        self.last_heartbeat_from_leader = time.time()
+        self.last_heartbeat_from_leader = time.monotonic()  # Use monotonic for stability
         self.running = True
         self.election_active = False
+        self.last_election_time = 0.0  # Track last election to add cooldown (monotonic)
+        self.finalize_timer = None  # Track election finalize timer for cancellation
+        self.timeout_with_jitter = HEARTBEAT_TIMEOUT  # Timeout threshold with jitter, recalculated on each heartbeat
 
         # ================================
         # NEW: snapshot sync storage
@@ -310,14 +315,46 @@ class PongServer:
         return {sid: addr for sid, addr in self.peers.items() if sid > self.server_id}
 
     def _finalize_election(self):
+        """Finalize election after timeout. Guard against race conditions."""
         if self.election_active and not self.is_leader():
             self.become_leader()
+    
+    def _cancel_finalize_timer(self):
+        """Cancel pending finalize timer to prevent double leadership."""
+        if self.finalize_timer and self.finalize_timer.is_alive():
+            self.finalize_timer.cancel()
+            self.finalize_timer = None
 
     def start_election(self):
+        """Start election with cooldown and 2-server special case."""
+        # Check election cooldown (use monotonic time)
+        now = time.monotonic()
+        if now - self.last_election_time < ELECTION_COOLDOWN:
+            print(f"Election cooldown active. Skipping election.")
+            return
+        
+        # Special case: If only 2 servers (self + 1 peer), auto-elect higher UUID
+        if len(self.peers) == 1:
+            peer_id = list(self.peers.keys())[0]
+            if peer_id > self.server_id:
+                print(f"2-server mode: Auto-electing higher peer {peer_id} as leader")
+                self.leader_id = peer_id
+                self.election_active = False
+                self.last_heartbeat_from_leader = time.monotonic()
+                # Set jitter for follower timeout
+                self.timeout_with_jitter = HEARTBEAT_TIMEOUT + random.uniform(0, 1.0)
+                self._print_membership()
+                return
+            else:
+                print(f"2-server mode: I have higher UUID, becoming leader")
+                self.become_leader()
+                return
+        
         if self.election_active:
             return
 
         self.election_active = True
+        self.last_election_time = now
         higher = self.higher_peers()
 
         if not higher:
@@ -328,13 +365,18 @@ class PongServer:
         for _, addr in higher.items():
             send_message(self.control_sock, addr, msg)
 
-        t = threading.Timer(2.5, self._finalize_election)
-        t.daemon = True
-        t.start()
+        # Add random jitter to reduce simultaneous elections
+        jitter = random.uniform(0, 0.5)
+        self.finalize_timer = threading.Timer(2.5 + jitter, self._finalize_election)
+        self.finalize_timer.daemon = True
+        self.finalize_timer.start()
 
     def become_leader(self):
+        # Cancel any pending finalize timer
+        self._cancel_finalize_timer()
+        
         self.leader_id = self.server_id
-        self.last_heartbeat_from_leader = time.time()
+        self.last_heartbeat_from_leader = time.monotonic()
         self.election_active = False
 
         print(f"*** I AM LEADER NOW ({self.server_id}) ***")
@@ -358,6 +400,11 @@ class PongServer:
         for _, addr in self.peers.items():
             send_message(self.control_sock, addr, msg)
 
+        # Send immediate heartbeat to prevent timeout
+        hb = {"type": MSG_HEARTBEAT, "server_id": self.server_id}
+        for _, addr in self.peers.items():
+            send_message(self.control_sock, addr, hb)
+
         self._print_membership()
 
     def is_leader(self):
@@ -373,11 +420,18 @@ class PongServer:
             t = msg.get("type")
 
             # ================================
-            # NEW: update liveness ONLY on heartbeat
+            # NEW: update liveness ONLY on heartbeat from LEADER
             # ================================
             if t == MSG_HEARTBEAT:
                 sid = msg.get("server_id")
-                if sid:
+                if sid and sid == self.leader_id:
+                    # Only update liveness for leader heartbeats
+                    self._last_seen[sid] = time.time()
+                    self.last_heartbeat_from_leader = time.monotonic()
+                    # Reset jitter when receiving leader heartbeat
+                    self.timeout_with_jitter = HEARTBEAT_TIMEOUT + random.uniform(0, 1.0)
+                elif sid:
+                    # Still track other peers for membership, but don't reset leader timeout
                     self._last_seen[sid] = time.time()
 
             elif t == MSG_ACK:
@@ -465,14 +519,10 @@ class PongServer:
                                     {"type": MSG_JOIN, "id": new_id}
                                 )
 
-                    if new_id > self.server_id:
-                        print(f"Higher peer {new_id} detected (higher than me). Starting Election.")
-                        self.start_election()
-
+                    # Only trigger election if higher peer joins and we're leader or follower with lower leader
                     if self.is_leader() and new_id > self.server_id:
                         print(f"Higher peer {new_id} joined. I am stepping down. Starting Election.")
                         self.start_election()
-
                     elif not self.is_leader() and new_id > self.leader_id:
                         print(
                             f"Higher peer {new_id} joined (bigger than known leader {self.leader_id}). Starting Election."
@@ -480,12 +530,13 @@ class PongServer:
                         self.start_election()
 
             elif t == MSG_HEARTBEAT:
-                self.last_heartbeat_from_leader = time.time()
                 sender_id = msg.get("server_id")
 
+                # Update leader if higher ID is sending heartbeats
                 if sender_id and sender_id > self.leader_id:
                     self.leader_id = sender_id
 
+                # Add unknown peers to membership
                 if sender_id and sender_id not in self.peers and sender_id != self.server_id:
                     self.peers[sender_id] = (addr[0], SERVER_CONTROL_PORT)
 
@@ -497,9 +548,14 @@ class PongServer:
                     self.start_election()
 
             elif t == MSG_COORDINATOR:
+                # Cancel any pending finalize timer
+                self._cancel_finalize_timer()
+                
                 self.leader_id = msg.get("leader_id")
                 self.election_active = False
-                self.last_heartbeat_from_leader = time.time()
+                self.last_heartbeat_from_leader = time.monotonic()
+                # Set jitter for follower timeout
+                self.timeout_with_jitter = HEARTBEAT_TIMEOUT + random.uniform(0, 1.0)
 
                 # Immediately acknowledge leader announcement
                 ack = {"type": MSG_ACK, "server_id": self.server_id}
@@ -595,10 +651,15 @@ class PongServer:
                             send_message(self.client_sock, c, update_msg)
 
                 elif self.is_leader():
-                    # ALWAYS accept authoritative snapshot (no condition)
+                    # Accept authoritative snapshot from followers during recovery
                     for rid, state in rooms.items():
                         room = self._get_room(int(rid))
-                        room.restore(state)
+                        incoming_seq = state.get("seq", -1)
+                        # Only accept if the incoming state is more recent
+                        if incoming_seq > room.seq:
+                            room.restore(state.get("state"))
+                            room.seq = incoming_seq
+                            print(f"Leader: Recovered room {rid} state from follower (seq={incoming_seq})")
 
             # =====================================================
             # LEADER-ONLY input handling (NOW SHARDED)
@@ -619,24 +680,21 @@ class PongServer:
         while self.running:
             time.sleep(HEARTBEAT_INTERVAL)
 
+            # Only leader sends heartbeats
             if self.is_leader():
                 hb = {"type": MSG_HEARTBEAT, "server_id": self.server_id}
                 for _, addr in self.peers.items():
                     send_message(self.control_sock, addr, hb)
 
-            if not self.is_leader():
-                hb = {"type": MSG_HEARTBEAT, "server_id": self.server_id}
-                for _, addr in self.peers.items():
-                    send_message(self.control_sock, addr, hb)
-
-            if self.is_leader() and self.pending_acks and self._last_control_msg:
-                for sid in list(self.pending_acks):
-                    addr = self.peers.get(sid)
-                    if addr:
-                        send_message(self.control_sock, addr, self._last_control_msg)
+                # Retry coordinator message if peers haven't ACKed
+                if self.pending_acks and self._last_control_msg:
+                    for sid in list(self.pending_acks):
+                        addr = self.peers.get(sid)
+                        if addr:
+                            send_message(self.control_sock, addr, self._last_control_msg)
 
             # =====================================================
-            # NEW: prune stale peers (same logic preserved)
+            # NEW: prune stale peers based on heartbeat timeout
             # =====================================================
             now = time.time()
             stale = [
@@ -650,8 +708,9 @@ class PongServer:
                     self.peers.pop(sid, None)
                 self._last_seen.pop(sid, None)
 
+            # Check for leader timeout (followers only)
             if not self.is_leader():
-                if time.time() - self.last_heartbeat_from_leader > HEARTBEAT_TIMEOUT:
+                if time.monotonic() - self.last_heartbeat_from_leader > self.timeout_with_jitter:
                     print("Leader timeout! Starting election.")
                     self.start_election()
 
