@@ -300,23 +300,27 @@ class PongServer:
         # No state push needed since peer already has game data
         # =====================================================
         total_servers = len(self.peers) + 1  # self + peers
-        if total_servers == 2:
-            # Get the only peer
-            peer_id = list(self.peers.keys())[0]
-            
-            # Compare UUIDs: higher UUID becomes leader
-            if self.server_id > peer_id:
-                # I have higher UUID, I become leader
-                print(f"2-server scenario: I have higher UUID, becoming leader")
-                self.become_leader()
+        if total_servers == 2 and len(self.peers) == 1:
+            # Get the only peer - use try/except to handle race condition
+            try:
+                peer_id = list(self.peers.keys())[0]
+            except (IndexError, KeyError):
+                # Peer disappeared between check and access, fall back to normal election
+                pass
             else:
-                # Peer has higher UUID, they should be leader
-                print(f"2-server scenario: Peer {peer_id} has higher UUID, waiting for their leadership")
-                # Set them as leader and wait for their COORDINATOR message
-                self.leader_id = peer_id
-                self.election_active = False
-                self.last_heartbeat_from_leader = time.time()
-            return
+                # Compare UUIDs: higher UUID becomes leader
+                if self.server_id > peer_id:
+                    # I have higher UUID, I become leader
+                    print(f"2-server scenario: I have higher UUID, becoming leader")
+                    self.become_leader()
+                else:
+                    # Peer has higher UUID, they should be leader
+                    print(f"2-server scenario: Peer {peer_id} has higher UUID, waiting for their leadership")
+                    # Set them as leader and wait for their COORDINATOR message
+                    self.leader_id = peer_id
+                    self.election_active = False
+                    self.last_heartbeat_from_leader = time.time()
+                return
         
         higher = self.higher_peers()
 
