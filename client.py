@@ -15,7 +15,7 @@ BLACK = (0, 0, 0)
 RED = (255, 0, 0)
 
 # Timeout in seconds before client decides server is dead
-SERVER_TIMEOUT = 2.0 
+SERVER_TIMEOUT = 6.0  # Increased to match server timeout 
 
 class PongClient:
     def __init__(self, player: int):
@@ -29,6 +29,10 @@ class PongClient:
         # FAULT TOLERANCE: Track when we last heard from server
         self.last_update_time = 0
         self.last_seq = -1
+        
+        # Track if both players in our room have joined
+        self.both_players_ready = False
+        self.waiting_for_players = True
 
     def _find_server(self):
         """Blocking search for a server."""
@@ -50,23 +54,18 @@ class PongClient:
             # Optional: Visual feedback in console
             print(".", end="", flush=True)
 
-    def _reconnect(self, screen=None):
-        """Called when connection is lost. Loops until a new server is found."""
-        print("\n[CLIENT] Connection lost! Reconnecting...")
+    def _reconnect(self):
+        """Called when connection is lost. Silently reconnects without spam."""
+        print(f"\n[CLIENT {self.player}] Connection lost! Searching for server...")
         self.server_addr = None
+        self.waiting_for_players = True
+        self.both_players_ready = False
         
         while self.server_addr is None and self.running:
-            # Draw "Reconnecting" screen
-            if screen and self.font:
-                screen.fill(BLACK)
-                text = self.font.render("Connection Lost...", True, RED)
-                text2 = self.font.render("Searching for new Server...", True, WHITE)
-                screen.blit(text, (SCREEN_WIDTH//2 - 150, SCREEN_HEIGHT//2 - 30))
-                screen.blit(text2, (SCREEN_WIDTH//2 - 200, SCREEN_HEIGHT//2 + 20))
-                pygame.display.flip()
-
-            # Attempt discovery
+            # Attempt discovery (silent retries)
             self.server_addr = self._find_server()
+            if self.server_addr is None:
+                time.sleep(0.5)  # Wait before retrying
         
         # Once found, announce presence immediately
         if self.server_addr:
@@ -74,12 +73,47 @@ class PongClient:
             self._announce()
 
     def start(self):
-        # Initial connection
+        # Initial connection (no pygame window yet)
+        print(f"[CLIENT {self.player}] Connecting to server...")
         self.server_addr = self._find_server()
         if self.server_addr:
             self.last_update_time = time.time()
             self._announce()
-            self.game_loop()
+            
+            # Wait for both players before opening pygame window
+            print(f"[CLIENT {self.player}] Waiting for both players to join...")
+            while self.waiting_for_players and self.running:
+                # Check for state updates
+                self.sock.settimeout(0.1)
+                try:
+                    msg, _ = recv_message(self.sock)
+                    if msg.get("type") == MSG_GAME_UPDATE:
+                        seq = msg.get("seq", -1)
+                        if seq > self.last_seq:
+                            self.last_seq = seq
+                            self.state = msg.get("state")
+                            self.last_update_time = time.time()
+                            # Check if game has started (both players present)
+                            # Game starts when seq > 0, meaning both players are connected
+                            if seq > 0:
+                                self.waiting_for_players = False
+                                self.both_players_ready = True
+                                print(f"[CLIENT {self.player}] Both players ready! Starting game...")
+                                break
+                except:
+                    pass
+                
+                # Check for server timeout during waiting
+                if time.time() - self.last_update_time > SERVER_TIMEOUT:
+                    self._reconnect()
+                
+                # Send periodic inputs to keep connection alive
+                self.send_input(0)
+                time.sleep(0.5)
+            
+            # Now start the actual game loop with pygame
+            if self.both_players_ready:
+                self.game_loop()
 
     def _announce(self):
         if self.server_addr:
@@ -159,9 +193,13 @@ class PongClient:
         while self.running:
             # 1. Check Watchdog (Fault Tolerance)
             if time.time() - self.last_update_time > SERVER_TIMEOUT:
-                self._reconnect(screen)
-                clock.tick(60)
-                continue
+                print(f"[CLIENT {self.player}] Server timeout, reconnecting...")
+                pygame.quit()
+                self._reconnect()
+                # After reconnecting, need to wait for players again
+                self.waiting_for_players = True
+                self.both_players_ready = False
+                return  # Exit game_loop, will be restarted by start()
 
             # 2. Event Handling
             for event in pygame.event.get():
