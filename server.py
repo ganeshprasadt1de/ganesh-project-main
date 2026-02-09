@@ -243,6 +243,14 @@ class PongServer:
         return snap
 
     # ================================
+    # Helper method to add unknown peers
+    # ================================
+    def _add_unknown_peer(self, sid: str, addr: Tuple[str, int]):
+        """Add a peer to the membership if not already present."""
+        if sid and sid not in self.peers and sid != self.server_id:
+            self.peers[sid] = (addr[0], SERVER_CONTROL_PORT)
+
+    # ================================
     # NEW: MEMBERSHIP TABLE PRINTER
     # ================================
     def _print_membership(self):
@@ -441,22 +449,18 @@ class PongServer:
                     self.last_heartbeat_from_leader = time.monotonic()
                     # Reset jitter when receiving leader heartbeat
                     self.timeout_with_jitter = HEARTBEAT_TIMEOUT + random.uniform(0, 1.0)
-                elif sid and sid > self.leader_id:
+                elif sid and self.leader_id is not None and sid > self.leader_id:
                     # A higher ID peer is claiming leadership, accept it
                     self._last_seen[sid] = time.time()
                     self.leader_id = sid
                     self.last_heartbeat_from_leader = time.monotonic()
                     self.timeout_with_jitter = HEARTBEAT_TIMEOUT + random.uniform(0, 1.0)
                     print(f"Higher ID peer {sid} is now leader")
-                    # Add unknown peers to membership
-                    if sid not in self.peers and sid != self.server_id:
-                        self.peers[sid] = (addr[0], SERVER_CONTROL_PORT)
+                    self._add_unknown_peer(sid, addr)
                 elif sid:
                     # Still track other peers for membership, but don't reset leader timeout
                     self._last_seen[sid] = time.time()
-                    # Add unknown peers to membership
-                    if sid not in self.peers and sid != self.server_id:
-                        self.peers[sid] = (addr[0], SERVER_CONTROL_PORT)
+                    self._add_unknown_peer(sid, addr)
 
             elif t == MSG_ACK:
                 sid = msg.get("server_id")
@@ -564,10 +568,11 @@ class PongServer:
 
             elif t == MSG_ELECTION_OK:
                 # Cancel any pending finalize timer to prevent split brain
-                # A higher peer is taking over, so we should not become leader
+                # MSG_ELECTION_OK is only sent by peers with higher IDs (see MSG_ELECTION handler above)
+                # This prevents us from becoming leader when a higher-ID peer is running
                 self._cancel_finalize_timer()
                 self.election_active = False
-                print(f"Received ELECTION_OK from higher peer. Stepping down from election.")
+                print(f"Received ELECTION_OK. A higher-ID peer will become leader.")
 
             elif t == MSG_COORDINATOR:
                 # Cancel any pending finalize timer
