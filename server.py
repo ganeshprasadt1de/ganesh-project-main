@@ -116,7 +116,7 @@ class PongServer:
         self.election_active = False
         self.last_election_time = 0.0  # Track last election to add cooldown (monotonic)
         self.finalize_timer = None  # Track election finalize timer for cancellation
-        self.follower_timeout_threshold = HEARTBEAT_TIMEOUT  # Base timeout, will be jittered when becoming follower
+        self.timeout_with_jitter = HEARTBEAT_TIMEOUT  # Timeout threshold with jitter, recalculated on each heartbeat
 
         # ================================
         # NEW: snapshot sync storage
@@ -342,7 +342,7 @@ class PongServer:
                 self.election_active = False
                 self.last_heartbeat_from_leader = time.monotonic()
                 # Set jitter for follower timeout
-                self.follower_timeout_threshold = HEARTBEAT_TIMEOUT + random.uniform(0, 1.0)
+                self.timeout_with_jitter = HEARTBEAT_TIMEOUT + random.uniform(0, 1.0)
                 self._print_membership()
                 return
             else:
@@ -429,7 +429,7 @@ class PongServer:
                     self._last_seen[sid] = time.time()
                     self.last_heartbeat_from_leader = time.monotonic()
                     # Reset jitter when receiving leader heartbeat
-                    self.follower_timeout_threshold = HEARTBEAT_TIMEOUT + random.uniform(0, 1.0)
+                    self.timeout_with_jitter = HEARTBEAT_TIMEOUT + random.uniform(0, 1.0)
                 elif sid:
                     # Still track other peers for membership, but don't reset leader timeout
                     self._last_seen[sid] = time.time()
@@ -555,7 +555,7 @@ class PongServer:
                 self.election_active = False
                 self.last_heartbeat_from_leader = time.monotonic()
                 # Set jitter for follower timeout
-                self.follower_timeout_threshold = HEARTBEAT_TIMEOUT + random.uniform(0, 1.0)
+                self.timeout_with_jitter = HEARTBEAT_TIMEOUT + random.uniform(0, 1.0)
 
                 # Immediately acknowledge leader announcement
                 ack = {"type": MSG_ACK, "server_id": self.server_id}
@@ -710,7 +710,7 @@ class PongServer:
 
             # Check for leader timeout (followers only)
             if not self.is_leader():
-                if time.monotonic() - self.last_heartbeat_from_leader > self.follower_timeout_threshold:
+                if time.monotonic() - self.last_heartbeat_from_leader > self.timeout_with_jitter:
                     print("Leader timeout! Starting election.")
                     self.start_election()
 
