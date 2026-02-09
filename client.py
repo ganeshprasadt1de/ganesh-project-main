@@ -83,7 +83,7 @@ class PongClient:
                                 self.both_players_ready = True
                                 print(f"[CLIENT {self.player}] Both players ready! Starting game...")
                                 break
-                except:
+                except Exception:
                     pass
                 
                 # Check for server timeout during waiting
