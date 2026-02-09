@@ -75,7 +75,9 @@ class PongClient:
                             self.state = msg.get("state")
                             self.last_update_time = time.time()
                             # Check if game has started (both players present)
-                            # Game starts when seq > 0, meaning both players are connected
+                            # The server only increments seq when stepping the game,
+                            # which only happens when both players are connected (see PongRoom.step)
+                            # So seq > 0 definitively means both players have joined
                             if seq > 0:
                                 self.waiting_for_players = False
                                 self.both_players_ready = True

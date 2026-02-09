@@ -114,7 +114,7 @@ class PongServer:
         self.last_heartbeat_from_leader = time.monotonic()  # Use monotonic for stability
         self.running = True
         self.election_active = False
-        self.last_election_time = 0  # Track last election to add cooldown
+        self.last_election_time = 0.0  # Track last election to add cooldown (monotonic)
         self.finalize_timer = None  # Track election finalize timer for cancellation
 
         # ================================
@@ -326,8 +326,8 @@ class PongServer:
 
     def start_election(self):
         """Start election with cooldown and 2-server special case."""
-        # Check election cooldown
-        now = time.time()
+        # Check election cooldown (use monotonic time)
+        now = time.monotonic()
         if now - self.last_election_time < ELECTION_COOLDOWN:
             print(f"Election cooldown active. Skipping election.")
             return
