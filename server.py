@@ -144,6 +144,14 @@ class PongServer:
         self.pending_acks: Set[str] = set()
         self._last_control_msg = None
         # =====================================================
+        
+        # =====================================================
+        # Election message deduplication (prevent spam)
+        # Track recent election messages to avoid processing duplicates
+        # =====================================================
+        self._recent_election_messages = {}  # {candidate_id: timestamp}
+        self._election_msg_timeout = 2.0  # Ignore duplicate election msgs within 2 seconds
+        # =====================================================
 
         self.discovery_stop = threading.Event()
         self.discovery_thread = threading.Thread(
@@ -561,10 +569,32 @@ class PongServer:
 
             elif t == MSG_ELECTION:
                 candidate = msg.get("candidate")
+                
+                # Deduplicate election messages to prevent spam
+                now = time.time()
+                if candidate in self._recent_election_messages:
+                    last_seen = self._recent_election_messages[candidate]
+                    if now - last_seen < self._election_msg_timeout:
+                        # Ignore duplicate election message
+                        continue
+                
+                # Record this election message
+                self._recent_election_messages[candidate] = now
+                
+                # Clean up old entries
+                self._recent_election_messages = {
+                    cid: ts for cid, ts in self._recent_election_messages.items()
+                    if now - ts < self._election_msg_timeout
+                }
 
                 if candidate and self.server_id > candidate:
                     send_message(self.control_sock, addr, {"type": MSG_ELECTION_OK})
-                    self.start_election()
+                    # Only start our own election if we're not already in one
+                    # and outside the cooldown period to prevent election spam
+                    now_monotonic = time.monotonic()
+                    if not self.election_active and (now_monotonic - self.last_election_time >= ELECTION_COOLDOWN):
+                        print(f"Received election from {candidate}, starting my own election")
+                        self.start_election()
 
             elif t == MSG_ELECTION_OK:
                 # Cancel any pending finalize timer to prevent split brain
