@@ -96,3 +96,37 @@ ganesh-project-main/
 ├── common.py                 # Legacy shared utilities
 └── game_state.py             # Legacy physics model
 ```
+
+
+
+## ▶️ How to Run
+
+### Prerequisites
+
+```bash
+pip install pygame
+```
+
+### Start a server
+
+```bash
+cd ping-pong
+python main_server.py
+```
+
+You can start **multiple servers** on different machines (or the same machine
+by changing `SERVER_CONTROL_PORT` / `CLIENT_PORT` in `settings.py`).
+They will auto-discover each other and elect a leader.
+
+### Start clients (players)
+
+```bash
+# Terminal 1 — Player 1
+python main_client.py --player=1
+
+# Terminal 2 — Player 2
+python main_client.py --player=2
+```
+
+Players 1 & 2 are matched into **room 0**. Players 3 & 4 go to room 1, etc.
+
