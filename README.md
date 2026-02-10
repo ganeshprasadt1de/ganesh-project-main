@@ -9,7 +9,7 @@
 
 ## 📖 Overview
 
-This project is a distributed implementation of the classic Pong game. Unlike a standard multiplayer game, this system is designed to demonstrate core **Distributed Systems (DS)** concepts. It features a **Hybrid Architecture** where servers form a Peer-to-Peer (P2P) ring for coordination and fault tolerance, while clients connect to the active Leader via a Client-Server model.
+This project is a distributed implementation of the classic Pong game. Unlike a standard multiplayer game, this system is designed to demonstrate core **Distributed Systems (DS)** concepts. It features a **Hybrid Architecture** where servers form a Peer-to-Peer (P2P) cluster for coordination and fault tolerance, while clients connect to the active Leader via a Client-Server model.
 
 The system is resilient to server failures, automatically handling leader crashes through the **Bully Algorithm** and allowing new nodes to discover the cluster dynamically without hardcoded IP addresses.
 
@@ -39,8 +39,8 @@ The system operates on a **Hybrid Model** combining P2P and Client-Server patter
 - **Goal:** Eliminate the need for hardcoded IP addresses/ports in configuration files.
 - **Implementation:**
     - New nodes send a `MSG_DISCOVER_REQUEST` to the subnet broadcast address.
-    - Active nodes reply with their identity (`UUID`, `IP`, `Port`).
-    - **Code:** `discovery_protocol.py`, `discovery.py`.
+    - Active nodes reply with their identity (`UUID`, `IP`).
+    - **Code:** `discovery_protocol.py`.
 
 ### 2. Fault Tolerance (Leader Election) 👑
 
@@ -63,24 +63,36 @@ The system operates on a **Hybrid Model** combining P2P and Client-Server patter
 
 ---
 
+## 🔌 Ports and Traffic
+
+All communication uses UDP sockets. Ports are defined in `settings.py`.
+
+- **50000 (DISCOVERY_PORT):** UDP broadcast for discovery requests/responses between servers and clients.
+- **50010 (SERVER_CONTROL_PORT):** Server-to-server control plane (heartbeats, election, replication, snapshots, ACK/NACK).
+- **50020 (CLIENT_PORT):** Client-to-leader game traffic (inputs, room ready, game updates, game over).
+
+Clients bind to an ephemeral local port (bind port `0`) and send to the leader's `CLIENT_PORT`.
+
+---
+
 ## 📂 Project Structure
 
 ```text
-distributed-pong/
-├── main_server.py            # Entry point for Server nodes
-├── main_client.py            # Entry point for Clients (Players)
-├── config/
-│   └── settings.py           # Constants (Ports, Timeouts, Logging)
-├── components/
-│   ├── pong_server.py        # Server logic (State replication, Room mgmt)
-│   ├── pong_client.py        # Client logic (Pygame loop, Input handling)
-│   └── game_message.py       # UDP Message serialization/deserialization
-├── discovery/
-│   ├── discovery_protocol.py # Broadcast logic
-│   └── discovery.py          # Listener & Sender wrappers
-├── election/
-│   └── bully_election.py     # Leader Election implementation
-└── game/
-    ├── room.py               # Game Session (Sequencer logic)
-    └── game_state.py         # Physics engine (Pure logic)
+ganesh-project-main/
+├── main_server.py            # Entry point for server nodes (current)
+├── main_client.py            # Entry point for clients (current)
+├── pong_server.py            # Server runtime (rooms, replication, control plane)
+├── pong_client.py            # Client runtime (Pygame loop, inputs, rendering)
+├── room.py                   # Room/session state and sequencing
+├── game_room_state.py        # Physics engine used by rooms
+├── bully_election.py         # Bully election + heartbeat logic
+├── discovery_protocol.py     # UDP discovery (broadcast + responses)
+├── game_message.py           # Message serialization + UDP helpers
+├── settings.py               # Ports, timeouts, logging
+├── logs/                     # Runtime logs
+├── server.py                 # Legacy all-in-one server (not used by main_server)
+├── client.py                 # Legacy all-in-one client (not used by main_client)
+├── discovery.py              # Legacy discovery module (not used by current flow)
+├── common.py                 # Legacy shared utilities
+└── game_state.py             # Legacy physics model
 ```
