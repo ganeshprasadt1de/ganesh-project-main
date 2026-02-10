@@ -30,7 +30,10 @@ def get_smart_broadcast_ip():
 
 def server_discovery_listener(server_id: str, stop_event=None):
     # Bind to 0.0.0.0 to listen on ALL interfaces
-    sock = make_udp_socket(bind_ip="0.0.0.0", bind_port=DISCOVERY_BROADCAST_PORT, broadcast=True)
+    # Use the dynamically calculated discovery port (with offset)
+    from common import get_discovery_port
+    discovery_port = get_discovery_port()
+    sock = make_udp_socket(bind_ip="0.0.0.0", bind_port=discovery_port, broadcast=True)
     sock.settimeout(0.5)
     try:
         while True:
@@ -53,7 +56,14 @@ def server_discovery_listener(server_id: str, stop_event=None):
     finally:
         sock.close()
 
-def client_discover_servers(timeout: float = 2.0) -> List[Tuple[str, str]]:
+def client_discover_servers(timeout: float = 2.0, max_port_offset: int = 10) -> List[Tuple[str, str]]:
+    """
+    Discover servers by broadcasting to multiple discovery ports.
+    
+    Args:
+        timeout: How long to wait for responses
+        max_port_offset: Maximum port offset to scan (scans 0 to max_port_offset)
+    """
     results = []
     start = time.time()
     sock = make_udp_socket(bind_ip="0.0.0.0", bind_port=0, broadcast=True)
@@ -62,19 +72,24 @@ def client_discover_servers(timeout: float = 2.0) -> List[Tuple[str, str]]:
     request = {"type": MSG_DISCOVER_REQUEST}
     encoded_req = json.dumps(request).encode()
     
-    # --- SMART BROADCAST STRATEGY ---
-    # 1. Send to the calculated Subnet Broadcast (Fixes Hotspot/Windows)
+    # --- SMART BROADCAST STRATEGY WITH MULTIPLE PORTS ---
+    # Scan multiple ports to find servers with different port offsets
     subnet_bcast = get_smart_broadcast_ip()
-    try:
-        sock.sendto(encoded_req, (subnet_bcast, DISCOVERY_BROADCAST_PORT))
-    except Exception:
-        pass
+    
+    for port_offset in range(max_port_offset + 1):
+        discovery_port = DISCOVERY_BROADCAST_PORT + port_offset
+        
+        # 1. Send to the calculated Subnet Broadcast (Fixes Hotspot/Windows)
+        try:
+            sock.sendto(encoded_req, (subnet_bcast, discovery_port))
+        except Exception:
+            pass
 
-    # 2. Send to Global Broadcast (Backup for standard routers)
-    try:
-        sock.sendto(encoded_req, ("<broadcast>", DISCOVERY_BROADCAST_PORT))
-    except Exception:
-        pass
+        # 2. Send to Global Broadcast (Backup for standard routers)
+        try:
+            sock.sendto(encoded_req, ("<broadcast>", discovery_port))
+        except Exception:
+            pass
     # --------------------------------
 
     try:

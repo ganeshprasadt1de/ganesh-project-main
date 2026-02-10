@@ -2,9 +2,30 @@ import json
 import socket
 from typing import Any, Dict, Tuple, Optional
 
-SERVER_CONTROL_PORT = 50010
-CLIENT_PORT = 50020
-DISCOVERY_PORT = 50000
+# Base ports - can be offset for running multiple servers on same machine
+SERVER_CONTROL_PORT_BASE = 50010
+CLIENT_PORT_BASE = 50020
+DISCOVERY_PORT_BASE = 50000
+
+# Global port offset (set by server on startup)
+PORT_OFFSET = 0
+
+def get_server_control_port():
+    """Get the actual server control port with offset applied."""
+    return SERVER_CONTROL_PORT_BASE + PORT_OFFSET
+
+def get_client_port():
+    """Get the actual client port with offset applied."""
+    return CLIENT_PORT_BASE + PORT_OFFSET
+
+def get_discovery_port():
+    """Get the actual discovery port with offset applied."""
+    return DISCOVERY_PORT_BASE + PORT_OFFSET
+
+# Backwards compatibility
+SERVER_CONTROL_PORT = SERVER_CONTROL_PORT_BASE
+CLIENT_PORT = CLIENT_PORT_BASE
+DISCOVERY_PORT = DISCOVERY_PORT_BASE
 DISCOVERY_BROADCAST_PORT = DISCOVERY_PORT
 
 MSG_GAME_INPUT = "GAME_INPUT"

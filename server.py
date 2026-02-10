@@ -2,11 +2,14 @@ import uuid
 import threading
 import time
 import random
+import argparse
+import sys
 from typing import Dict, Tuple, Set
 
+import common
 from common import (
     make_udp_socket, send_message, recv_message,
-    SERVER_CONTROL_PORT, CLIENT_PORT,
+    get_server_control_port, get_client_port, get_discovery_port,
     MSG_GAME_INPUT, MSG_GAME_UPDATE, MSG_HEARTBEAT,
     MSG_ELECTION, MSG_ELECTION_OK, MSG_COORDINATOR, MSG_JOIN
 )
@@ -91,8 +94,12 @@ class PongServer:
         self.server_id = str(uuid.uuid4())
         self.peers: Dict[str, Tuple[str, int]] = {}
 
-        self.control_sock = make_udp_socket(bind_ip="0.0.0.0", bind_port=SERVER_CONTROL_PORT)
-        self.client_sock = make_udp_socket(bind_ip="0.0.0.0", bind_port=CLIENT_PORT)
+        # Use dynamic port functions instead of constants
+        self.control_port = get_server_control_port()
+        self.client_port = get_client_port()
+        
+        self.control_sock = make_udp_socket(bind_ip="0.0.0.0", bind_port=self.control_port)
+        self.client_sock = make_udp_socket(bind_ip="0.0.0.0", bind_port=self.client_port)
 
         self.leader_id = self.server_id
 
@@ -263,7 +270,7 @@ class PongServer:
     def _add_unknown_peer(self, sid: str, addr: Tuple[str, int]):
         """Add a peer to the membership if not already present."""
         if sid and sid not in self.peers and sid != self.server_id:
-            self.peers[sid] = (addr[0], SERVER_CONTROL_PORT)
+            self.peers[sid] = (addr[0], self.control_port)
 
     # ================================
     # NEW: MEMBERSHIP TABLE PRINTER
@@ -305,9 +312,9 @@ class PongServer:
             print(f"Found peers: {found}")
             for sid, sip in found:
                 if sid != self.server_id:
-                    self.peers[sid] = (sip, SERVER_CONTROL_PORT)
+                    self.peers[sid] = (sip, self.control_port)
                     join_msg = {"type": MSG_JOIN, "id": self.server_id}
-                    send_message(self.control_sock, (sip, SERVER_CONTROL_PORT), join_msg)
+                    send_message(self.control_sock, (sip, self.control_port), join_msg)
         else:
             print("No peers found. I am the first server.")
 
@@ -552,7 +559,7 @@ class PongServer:
                 if new_id and new_id != self.server_id:
                     if new_id not in self.peers:
                         print(f"Peer Joined: {new_id} from {addr[0]}")
-                        self.peers[new_id] = (addr[0], SERVER_CONTROL_PORT)
+                        self.peers[new_id] = (addr[0], self.control_port)
 
                         # Create a snapshot of peers to avoid RuntimeError
                         peers_snapshot = list(self.peers.items())
@@ -561,7 +568,7 @@ class PongServer:
                                 send_message(self.control_sock, addr, {"type": MSG_JOIN, "id": pid})
                                 send_message(
                                     self.control_sock,
-                                    (paddr[0], SERVER_CONTROL_PORT),
+                                    (paddr[0], self.control_port),
                                     {"type": MSG_JOIN, "id": new_id}
                                 )
 
@@ -754,8 +761,8 @@ class PongServer:
                 # messages are lost due to SO_REUSEPORT on same machine.
                 # =====================================================
                 # Check if this message came from a server (not a client)
-                # Server messages come on SERVER_CONTROL_PORT
-                if addr[1] == SERVER_CONTROL_PORT:
+                # Server messages come on control_port
+                if addr[1] == self.control_port:
                     # This is from another server, check if we know about it
                     sender_found = False
                     for sid, (sip, sport) in self.peers.items():
@@ -962,4 +969,18 @@ class PongServer:
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description='Distributed Pong Server')
+    parser.add_argument('--port-offset', type=int, default=0,
+                        help='Port offset for running multiple servers on same machine (default: 0)')
+    args = parser.parse_args()
+    
+    # Set the global port offset before creating server
+    common.PORT_OFFSET = args.port_offset
+    
+    if args.port_offset > 0:
+        print(f"Starting server with port offset {args.port_offset}")
+        print(f"  Discovery port: {common.get_discovery_port()}")
+        print(f"  Control port: {common.get_server_control_port()}")
+        print(f"  Client port: {common.get_client_port()}")
+    
     PongServer().start()
