@@ -1,98 +1,86 @@
-# Distributed Ping-Pong Game
+# Distributed 2D Ping Pong 🏓
 
-A distributed multiplayer Pong game built with the same architectural patterns
-as the **Connected Mobility System**.
+> A fault-tolerant, distributed multiplayer game implementing dynamic discovery, leader election, and reliable ordered multicast using Python.
 
-## Architecture
+![Python](https://img.shields.io/badge/Python-3.x-blue.svg)
+![Architecture](<https://img.shields.io/badge/Architecture-Hybrid%20(P2P%20%2B%20Client--Server)-orange>)
+![Protocol](https://img.shields.io/badge/Protocol-UDP-green)
+![Library](https://img.shields.io/badge/Library-Pygame-red)
 
-```
-ping-pong/
-├── main_server.py              # Server entry point (argparse)
-├── main_client.py              # Client entry point (argparse + pygame)
+## 📖 Overview
+
+This project is a distributed implementation of the classic Pong game. Unlike a standard multiplayer game, this system is designed to demonstrate core **Distributed Systems (DS)** concepts. It features a **Hybrid Architecture** where servers form a Peer-to-Peer (P2P) ring for coordination and fault tolerance, while clients connect to the active Leader via a Client-Server model.
+
+The system is resilient to server failures, automatically handling leader crashes through the **Bully Algorithm** and allowing new nodes to discover the cluster dynamically without hardcoded IP addresses.
+
+---
+
+## 🏗️ System Architecture
+
+The system operates on a **Hybrid Model** combining P2P and Client-Server patterns:
+
+1.  **Server Cluster (P2P Layer):**
+    - Servers communicate via UDP to maintain a synchronized game state.
+    - **Dynamic Discovery:** Servers use UDP broadcasting to find each other on the local subnet.
+    - **Leader Election:** The **Bully Algorithm** ensures that the server with the highest UUID becomes the Leader (Coordinator).
+    - **Replication:** The Leader acts as a **Sequencer**, processing game logic and replicating the state to Follower servers using a primary-backup approach.
+
+2.  **Client Layer (Client-Server Layer):**
+    - Clients (Players) discover the cluster via broadcast and connect to the current Leader.
+    - Clients are "dumb terminals"—they send inputs (`UP`/`DOWN`) and render the `GameState` received from the Leader.
+    - **Consistency:** Clients use a "Latest State Wins" strategy to handle out-of-order UDP packets, ensuring smooth gameplay.
+
+---
+
+## 🧩 Key Distributed Features
+
+### 1. Dynamic Discovery 📡
+
+- **Goal:** Eliminate the need for hardcoded IP addresses/ports in configuration files.
+- **Implementation:**
+    - New nodes send a `MSG_DISCOVER_REQUEST` to the subnet broadcast address.
+    - Active nodes reply with their identity (`UUID`, `IP`, `Port`).
+    - **Code:** `discovery_protocol.py`, `discovery.py`.
+
+### 2. Fault Tolerance (Leader Election) 👑
+
+- **Goal:** Ensure the game continues if the server hosting the game crashes.
+- **Algorithm:** **Bully Algorithm**.
+- **Mechanism:**
+    - Servers exchange `HEARTBEAT` messages.
+    - If the Leader fails (heartbeat timeout), a Follower initiates an election.
+    - The node with the highest `UUID` bullies others to become the new Coordinator.
+    - **Code:** `bully_election.py`.
+
+### 3. Reliable Ordered Multicast (Sequencer) 🔄
+
+- **Goal:** Ensure all participants see the same game events in the same order.
+- **Implementation:**
+    - **Total Ordering:** The Leader assigns a monotonically increasing sequence number (`seq`) to every game update.
+    - **Gap Detection:** Follower servers use `ACK`/`NACK` to request missing state updates from the Leader (Strict Consistency).
+    - **Client Optimization:** Clients discard updates with old sequence numbers to prevent "rubber-banding" (Real-time Consistency).
+    - **Code:** `room.py`, `pong_server.py`.
+
+---
+
+## 📂 Project Structure
+
+```text
+distributed-pong/
+├── main_server.py            # Entry point for Server nodes
+├── main_client.py            # Entry point for Clients (Players)
 ├── config/
-│   ├── __init__.py
-│   └── settings.py             # Ports, message types, logging, game config
+│   └── settings.py           # Constants (Ports, Timeouts, Logging)
 ├── components/
-│   ├── __init__.py
-│   ├── game_message.py         # Typed message class + UDP helpers
-│   ├── pong_server.py          # PongServer (rooms, replication, game loop)
-│   └── pong_client.py          # PongClient (pygame rendering, input)
+│   ├── pong_server.py        # Server logic (State replication, Room mgmt)
+│   ├── pong_client.py        # Client logic (Pygame loop, Input handling)
+│   └── game_message.py       # UDP Message serialization/deserialization
 ├── discovery/
-│   ├── __init__.py
-│   └── discovery_protocol.py   # UDP beacon-based server discovery
+│   ├── discovery_protocol.py # Broadcast logic
+│   └── discovery.py          # Listener & Sender wrappers
 ├── election/
-│   ├── __init__.py
-│   └── bully_election.py       # Bully leader-election algorithm
+│   └── bully_election.py     # Leader Election implementation
 └── game/
-    ├── __init__.py
-    ├── game_state.py            # Pure game physics (ball, paddles, scoring)
-    └── room.py                  # PongRoom — per-match state container
+    ├── room.py               # Game Session (Sequencer logic)
+    └── game_state.py         # Physics engine (Pure logic)
 ```
-
-### Key Design Decisions (mirroring CMS)
-
-| CMS Concept                       | Pong Equivalent                               |
-| --------------------------------- | --------------------------------------------- |
-| `config/settings.py`              | Centralised constants, loggers, file logging  |
-| `ClientMessage` / `ServerMessage` | `GameMessage` with type validation            |
-| `discovery_protocol.py`           | UDP broadcast request/response discovery      |
-| `bully_election.py`               | Extracted Bully Election module               |
-| `TCPServer`                       | `PongServer` (rooms, replication, game loop)  |
-| `TCPClient`                       | `PongClient` (pygame + reconnection watchdog) |
-| Event logging                     | Per-room sequence counters + NACK recovery    |
-
-## How to Run
-
-### Prerequisites
-
-```bash
-pip install pygame
-```
-
-### Start a server
-
-```bash
-cd ping-pong
-python main_server.py
-# Optional: python main_server.py --logging_level=DEBUG
-```
-
-You can start **multiple servers** on different machines (or the same machine
-by changing `SERVER_CONTROL_PORT` / `CLIENT_PORT` in `config/settings.py`).
-They will auto-discover each other and elect a leader.
-
-### Start clients (players)
-
-```bash
-# Terminal 1 — Player 1
-python main_client.py --player=1
-
-# Terminal 2 — Player 2
-python main_client.py --player=2
-```
-
-Players 1 & 2 are matched into **room 0**. Players 3 & 4 go to room 1, etc.
-
-### Controls
-
-| Key | Action    |
-| --- | --------- |
-| ↑   | Move up   |
-| ↓   | Move down |
-
-First to **3 points** wins (configurable via `WIN_SCORE` in settings).
-
-## Distributed Features
-
-- **Leader Election** — Bully algorithm elects the highest-UUID server as
-  leader. If the leader crashes, followers detect the timeout and re-elect.
-- **State Replication** — The leader simulates the game and replicates room
-  snapshots (with sequence numbers) to all followers.
-- **Snapshot Sync** — New servers joining the cluster request the full room
-  state from peers to catch up.
-- **NACK Recovery** — Followers that detect a gap in sequence numbers send a
-  NACK to the leader, which retransmits the missing state.
-- **Client Reconnection** — Clients automatically re-discover servers if
-  updates stop arriving (watchdog timeout).
-- **Multi-Room** — Supports concurrent matches with deterministic player-to-room
-  routing.
