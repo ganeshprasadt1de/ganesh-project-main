@@ -201,13 +201,13 @@ class PongServer:
         if self.leader_id == self._last_logged_leader:
             return
         self._last_logged_leader = self.leader_id
-        print(f"[{self.server_id}] Current leader: {self.leader_id}")
+        print(f"[{time.strftime('%H:%M:%S')}] [{self.server_id}] Current leader: {self.leader_id}")
         return
-        print("\n===== MEMBERSHIP TABLE =====")
-        print(f"Self   : {self.server_id}")
-        print(f"Leader : {self.leader_id}")
+        print(f"[{time.strftime('%H:%M:%S')}] ===== MEMBERSHIP TABLE =====")
+        print(f"[{time.strftime('%H:%M:%S')}] Self   : {self.server_id}")
+        print(f"[{time.strftime('%H:%M:%S')}] Leader : {self.leader_id}")
         if not self.peers:
-            print("Peers  : None")
+            print(f"[{time.strftime('%H:%M:%S')}] Peers  : None")
         else:
             for sid, (ip, _) in self.peers.items():
                 role = "LEADER" if sid == self.leader_id else "FOLLOWER"
@@ -217,34 +217,34 @@ class PongServer:
                 if now - last > HEARTBEAT_TIMEOUT * 2:
                     continue
 
-                print(f"{sid} -> {ip} ({role})")
-        print("============================\n")
+                print(f"[{time.strftime('%H:%M:%S')}] {sid} -> {ip} ({role})")
+            print(f"[{time.strftime('%H:%M:%S')}] ============================")
 
     def _log_leader_set(self):
         if self.leader_id == self._last_logged_leader:
             return
         self._last_logged_leader = self.leader_id
-        print(f"[{self.server_id}] Leader confirmed: {self.leader_id}")
+        print(f"[{time.strftime('%H:%M:%S')}] [{self.server_id}] Leader confirmed: {self.leader_id}")
 
     def start(self):
-        print(f"[{self.server_id}] Starting server...")
+        print(f"[{time.strftime('%H:%M:%S')}] [{self.server_id}] Starting server...")
         self.discovery_thread.start()
 
-        print("Scanning for peers...")
+        print(f"[{time.strftime('%H:%M:%S')}] Scanning for peers...")
         found = client_discover_servers(timeout=2.0)
 
         if found:
             peers_found = [(sid, sip) for sid, sip in found if sid != self.server_id]
             if peers_found:
-                print(f"Found peers: {peers_found}")
+                print(f"[{time.strftime('%H:%M:%S')}] Found peers: {peers_found}")
             else:
-                print("Found peers: []")
+                print(f"[{time.strftime('%H:%M:%S')}] Found peers: []")
             for sid, sip in peers_found:
                 self.peers[sid] = (sip, SERVER_CONTROL_PORT)
                 join_msg = {"type": MSG_JOIN, "id": self.server_id, "rank": self.server_rank}
                 send_message(self.control_sock, (sip, SERVER_CONTROL_PORT), join_msg)
         else:
-            print("No peers found. I am the first server.")
+            print(f"[{time.strftime('%H:%M:%S')}] No peers found. I am the first server.")
 
         if self.peers:
             self._request_state_snapshot()
@@ -256,11 +256,11 @@ class PongServer:
             self.leader_id = None
             self.leader_rank = 0
             self.leader_addr = None
-            print(f"[{self.server_id}] Initial leader: unknown (waiting for announcement)")
+            print(f"[{time.strftime('%H:%M:%S')}] [{self.server_id}] Initial leader: unknown (waiting for announcement)")
         else:
             self.leader_id = self.server_id
             self.leader_rank = self.server_rank
-            print(f"[{self.server_id}] Initial leader: {self.leader_id}")
+            print(f"[{time.strftime('%H:%M:%S')}] [{self.server_id}] Initial leader: {self.leader_id}")
 
         self.control_thread.start()
         self.client_thread.start()
@@ -305,7 +305,7 @@ class PongServer:
         if (self.leader_id is not None
                 and time.time() - self.last_heartbeat_from_leader <= HEARTBEAT_TIMEOUT):
             return
-        print("Starting election after jitter delay.")
+        print(f"[{time.strftime('%H:%M:%S')}] Starting election after jitter delay.")
         self.start_election()
 
     def _cancel_election_jitter(self):
@@ -340,7 +340,7 @@ class PongServer:
             if self._is_higher(sid, sid_rank, self.server_id, self.server_rank):
                 last = self._last_seen.get(sid, 0)
                 if time.time() - last < HEARTBEAT_TIMEOUT * 2:
-                    print(f"Yielding leadership to higher-ranked peer {sid[:8]}")
+                    print(f"[{time.strftime('%H:%M:%S')}] Yielding leadership to higher-ranked peer {sid[:8]}")
                     self.election_active = False
                     return
 
@@ -353,7 +353,7 @@ class PongServer:
         self.leader_addr = None
 
         if prev_leader != self.server_id:
-            print(f"*** I AM LEADER NOW ({self.server_id}) ***")
+            print(f"[{time.strftime('%H:%M:%S')}] *** I AM LEADER NOW ({self.server_id}) ***")
             self._log_leader_set()
 
         if self.peers:
@@ -403,7 +403,7 @@ class PongServer:
                     if accept:
                         prev_leader = self.leader_id
                         if self.is_leader() and sid != self.server_id:
-                            print(f"Stepping down: higher leader {sid[:8]} detected via heartbeat")
+                            print(f"[{time.strftime('%H:%M:%S')}] Stepping down: higher leader {sid[:8]} detected via heartbeat")
                         self.leader_id = sid
                         self.leader_rank = sid_rank
                         self.leader_addr = (addr[0], SERVER_CONTROL_PORT)
@@ -447,7 +447,7 @@ class PongServer:
             elif t == MSG_CLOSE_ROOM:
                 rid = msg.get("room_id")
                 if rid in self.rooms:
-                    print(f"Closing room {rid} (leader request)")
+                    print(f"[{time.strftime('%H:%M:%S')}] Closing room {rid} (leader request)")
                     self.rooms.pop(rid, None)
                 continue
 
@@ -488,12 +488,12 @@ class PongServer:
                         if ip == join_ip and sid != new_id
                     ]
                     for sid in stale:
-                        print(f"Evicting ghost peer {sid[:8]} (same IP as {new_id[:8]})")
+                        print(f"[{time.strftime('%H:%M:%S')}] Evicting ghost peer {sid[:8]} (same IP as {new_id[:8]})")
                         self.peers.pop(sid, None)
                         self._last_seen.pop(sid, None)
 
                     if new_id not in self.peers:
-                        print(f"Peer Joined: {new_id} from {join_ip}")
+                        print(f"[{time.strftime('%H:%M:%S')}] Peer Joined: {new_id} from {join_ip}")
                         self.peers[new_id] = (join_ip, SERVER_CONTROL_PORT)
 
                         for pid, paddr in self.peers.items():
@@ -510,7 +510,7 @@ class PongServer:
                                 )
 
                     if self.is_leader():
-                        print(f"Informing {new_id} about leader {self.leader_id}.")
+                        print(f"[{time.strftime('%H:%M:%S')}] Informing {new_id} about leader {self.leader_id}.")
                         send_message(
                             self.control_sock,
                             addr,
@@ -570,7 +570,7 @@ class PongServer:
                 send_message(self.control_sock, addr, ack)
 
                 if prev_leader != self.leader_id:
-                    print(f"New Leader Elected: {self.leader_id}")
+                    print(f"[{time.strftime('%H:%M:%S')}] New Leader Elected: {self.leader_id}")
                     self._log_leader_set()
 
                 if self.game_state.score1 > 0 or self.game_state.score2 > 0:
@@ -608,7 +608,7 @@ class PongServer:
 
                     if (remote_state.get("score1", 0) > 0 or remote_state.get("score2", 0) > 0):
                         if self.game_state.score1 == 0 and self.game_state.score2 == 0:
-                            print("Leader: Recovering game state from survivor!")
+                            print(f"[{time.strftime('%H:%M:%S')}] Leader: Recovering game state from survivor!")
                             self.game_state = GameState.from_dict(remote_state)
 
             elif t == MSG_ROOMS_UPDATE:
@@ -673,7 +673,7 @@ class PongServer:
                         pass
 
                 if pid not in room.connected_players:
-                    print(f"Leader: Player {pid} detected via forwarding (room {room_id})!")
+                    print(f"[{time.strftime('%H:%M:%S')}] Leader: Player {pid} detected via forwarding (room {room_id})!")
 
                 room.apply_input(pid, direction)
                 if len(room.connected_players) >= 2 and not room.ready_sent:
@@ -702,7 +702,7 @@ class PongServer:
 
             for sid in stale:
                 if sid in self.peers:
-                    print(f"Pruning dead peer: {sid}")
+                    print(f"[{time.strftime('%H:%M:%S')}] Pruning dead peer: {sid}")
                     self.peers.pop(sid, None)
                 self._last_seen.pop(sid, None)
 
@@ -711,9 +711,9 @@ class PongServer:
                     if not self.election_active and self._election_jitter_timer is None:
                         jitter = random.uniform(0.05, HEARTBEAT_INTERVAL)
                         if self.leader_id is None:
-                            print(f"Leader unknown. Scheduling election in {jitter:.2f}s (jitter)")
+                            print(f"[{time.strftime('%H:%M:%S')}] Leader unknown. Scheduling election in {jitter:.2f}s (jitter)")
                         else:
-                            print(f"Leader timeout! Scheduling election in {jitter:.2f}s (jitter)")
+                            print(f"[{time.strftime('%H:%M:%S')}] Leader timeout! Scheduling election in {jitter:.2f}s (jitter)")
                         self._election_jitter_timer = threading.Timer(jitter, self._jittered_start_election)
                         self._election_jitter_timer.daemon = True
                         self._election_jitter_timer.start()
@@ -737,7 +737,7 @@ class PongServer:
                         direction = int(msg.get("dir", 0))
 
                         if pid not in room.connected_players:
-                            print(f"Leader: Player {pid} detected locally (room {room_id})!")
+                            print(f"[{time.strftime('%H:%M:%S')}] Leader: Player {pid} detected locally (room {room_id})!")
 
                         room.apply_input(pid, direction)
                         if len(room.connected_players) >= 2 and not room.ready_sent:
@@ -765,7 +765,7 @@ class PongServer:
             if time.time() - last_print > 5.0:
                 for rid, room in self.rooms.items():
                     print(
-                        f"Room {rid} Status: Players Connected: {room.connected_players} (Need 2 to start)"
+                        f"[{time.strftime('%H:%M:%S')}] Room {rid} Status: Players Connected: {room.connected_players} (Need 2 to start)"
                     )
                 last_print = time.time()
 
@@ -777,7 +777,7 @@ class PongServer:
                 if (room.game_state.score1 >= WIN_SCORE or
                     room.game_state.score2 >= WIN_SCORE):
 
-                    print(f"Room {rid} finished. Closing room.")
+                    print(f"[{time.strftime('%H:%M:%S')}] Room {rid} finished. Closing room.")
 
                     game_over_msg = {"type": MSG_GAME_OVER}
                     for c in list(room.client_addrs):

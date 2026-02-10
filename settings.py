@@ -77,8 +77,11 @@ LOG_DIR.mkdir(exist_ok=True)
 
 LOG_FORMAT = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 LOG_DATE_FORMAT = '%Y-%m-%d %H:%M:%S'
+SERVER_LOG_DATE_FORMAT = '%H:%M:%S'
+CLIENT_LOG_DATE_FORMAT = '%H:%M:%S'
+CONSOLE_LOG_DATE_FORMAT = '%H:%M:%S'
 
-logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(format=LOG_FORMAT, datefmt=CONSOLE_LOG_DATE_FORMAT)
 
 MAIN_SERVER_LOGGER = logging.getLogger("MainServer")
 MAIN_CLIENT_LOGGER = logging.getLogger("MainClient")
@@ -93,7 +96,7 @@ def setup_server_file_logging(server_id, logging_level="INFO"):
     log_path = LOG_DIR / log_filename
 
     file_handler = logging.FileHandler(log_path, mode='w')
-    file_handler.setFormatter(logging.Formatter(LOG_FORMAT, datefmt=LOG_DATE_FORMAT))
+    file_handler.setFormatter(logging.Formatter(LOG_FORMAT, datefmt=SERVER_LOG_DATE_FORMAT))
 
     for logger_name in ["MainServer", "PongServer", "DiscoveryProtocol", "BullyElection"]:
         logger = logging.getLogger(logger_name)
@@ -108,7 +111,7 @@ def setup_client_file_logging(player_id, logging_level="INFO"):
     log_path = LOG_DIR / log_filename
 
     file_handler = logging.FileHandler(log_path, mode='w')
-    file_handler.setFormatter(logging.Formatter(LOG_FORMAT, datefmt=LOG_DATE_FORMAT))
+    file_handler.setFormatter(logging.Formatter(LOG_FORMAT, datefmt=CLIENT_LOG_DATE_FORMAT))
 
     for logger_name in ["MainClient", "PongClient"]:
         logger = logging.getLogger(logger_name)
