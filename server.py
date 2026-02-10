@@ -152,6 +152,13 @@ class PongServer:
         self._recent_election_messages = {}  # {candidate_id: timestamp}
         self._election_msg_timeout = 2.0  # Ignore duplicate election msgs within 2 seconds
         # =====================================================
+        
+        # =====================================================
+        # CRITICAL FIX: Track servers that forward to us but we don't know about
+        # This fixes race condition where JOIN messages are lost
+        # =====================================================
+        self._forwarding_servers: Set[Tuple[str, int]] = set()
+        # =====================================================
 
         self.discovery_stop = threading.Event()
         self.discovery_thread = threading.Thread(
@@ -739,6 +746,32 @@ class PongServer:
                     print(f"Leader: Player {pid} detected via forwarding (room {room_id})!")
 
                 room.apply_input(pid, direction)
+                
+                # =====================================================
+                # CRITICAL FIX: Auto-discover forwarding server
+                # If we receive a forwarded message from a server not in our peers,
+                # add it automatically. This fixes the race condition where JOIN 
+                # messages are lost due to SO_REUSEPORT on same machine.
+                # =====================================================
+                # Check if this message came from a server (not a client)
+                # Server messages come on SERVER_CONTROL_PORT
+                if addr[1] == SERVER_CONTROL_PORT:
+                    # This is from another server, check if we know about it
+                    sender_found = False
+                    for sid, (sip, sport) in self.peers.items():
+                        if sip == addr[0] and sport == addr[1]:
+                            sender_found = True
+                            break
+                    
+                    if not sender_found:
+                        # We don't know about this server, but it's forwarding to us
+                        # This means it thinks we're the leader, so add it to peers
+                        # We'll use a placeholder ID until we get proper JOIN
+                        print(f"Leader: Auto-discovered forwarding server from {addr[0]}")
+                        # Note: We can't add to peers without a server_id
+                        # Instead, we need to track the address and send updates to it
+                        # For now, we'll add it to a separate tracking dict
+                        self._forwarding_servers.add(addr)
 
     def heartbeat_loop(self):
         while self.running:
@@ -825,8 +858,15 @@ class PongServer:
                         leader_addr = self.peers.get(self.leader_id)
                         if leader_addr:
                             send_message(self.control_sock, leader_addr, msg)
+                        else:
+                            # No leader known - this is a problem!
+                            print(f"Follower: Cannot forward player {pid} input - no leader address!")
 
-            except Exception:
+            except Exception as e:
+                # Log exceptions to help debug
+                import traceback
+                print(f"Error in client_loop: {e}")
+                traceback.print_exc()
                 continue
 
     def game_loop(self):
@@ -904,14 +944,20 @@ class PongServer:
             # NEW: replicate FULL rooms snapshot to followers
             # (authoritative, replaces single-state broadcast)
             # =====================================================
-            if self.peers and self.rooms:
+            if (self.peers or self._forwarding_servers) and self.rooms:
                 rooms_update = {
                     "type": MSG_ROOMS_UPDATE,
                     "rooms": self._rooms_snapshot()
                 }
 
+                # Send to known peers
                 # Create a snapshot of peers to avoid RuntimeError
                 for _, addr in list(self.peers.items()):
+                    send_message(self.control_sock, addr, rooms_update)
+                
+                # CRITICAL FIX: Also send to forwarding servers we auto-discovered
+                # These are servers that sent us messages but never properly joined
+                for addr in list(self._forwarding_servers):
                     send_message(self.control_sock, addr, rooms_update)
 
 
