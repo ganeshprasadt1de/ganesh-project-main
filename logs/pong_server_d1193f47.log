@@ -1,0 +1,10 @@
+2026-02-10 11:06:10 - MainServer - INFO - Starting Pong server d1193f47
+2026-02-10 11:06:10 - MainServer - INFO - Logs saved to: logs\pong_server_d1193f47.log
+2026-02-10 11:06:10 - PongServer - INFO - Starting server d1193f47 ...
+2026-02-10 11:06:10 - PongServer - INFO - Scanning for peers...
+2026-02-10 11:06:10 - DiscoveryProtocol - INFO - Discovery listener started for server d1193f47
+2026-02-10 11:06:10 - DiscoveryProtocol - INFO - Discovered server d1193f47 at 172.28.181.185
+2026-02-10 11:06:12 - DiscoveryProtocol - INFO - Discovery complete — found 1 server(s)
+2026-02-10 11:06:12 - PongServer - INFO - Found peers: []
+2026-02-10 11:06:12 - PongServer - INFO - I am the initial leader (d1193f47)
+2026-02-10 11:06:20 - PongServer - INFO - Shutting down server...

@@ -1,0 +1,15 @@
+2026-02-10 10:04:34 - MainServer - INFO - Starting Pong server 5fc045e5
+2026-02-10 10:04:34 - MainServer - INFO - Logs saved to: logs\pong_server_5fc045e5.log
+2026-02-10 10:04:34 - PongServer - INFO - Starting server 5fc045e5 ...
+2026-02-10 10:04:34 - DiscoveryProtocol - INFO - Discovery listener started for server 5fc045e5
+2026-02-10 10:04:34 - PongServer - INFO - Scanning for peers...
+2026-02-10 10:04:34 - DiscoveryProtocol - INFO - Discovered server 5fc045e5 at 192.168.0.16
+2026-02-10 10:04:34 - DiscoveryProtocol - INFO - Discovered server 6681327a at 192.168.0.97
+2026-02-10 10:04:36 - DiscoveryProtocol - INFO - Discovery complete — found 2 server(s)
+2026-02-10 10:04:36 - PongServer - INFO - Found peers: [('6681327a', '192.168.0.97')]
+2026-02-10 10:04:37 - PongServer - INFO - Waiting for leader announcement...
+2026-02-10 10:04:37 - PongServer - INFO - Discovered peer 73d1ea6c via heartbeat
+2026-02-10 10:04:37 - PongServer - INFO - Leader confirmed: 73d1ea6c
+2026-02-10 10:04:37 - PongServer - INFO - Peer joined: fd9bbcf9 from 192.168.0.97
+2026-02-10 10:04:37 - PongServer - INFO - Peer joined: da3350b0 from 192.168.0.97
+2026-02-10 10:04:52 - PongServer - INFO - Shutting down server...

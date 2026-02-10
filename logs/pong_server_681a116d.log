@@ -1,0 +1,12 @@
+2026-02-10 12:02:51 - MainServer - INFO - Starting Pong server 681a116d
+2026-02-10 12:02:51 - MainServer - INFO - Logs saved to: logs\pong_server_681a116d.log
+2026-02-10 12:02:51 - PongServer - INFO - Starting server 681a116d ...
+2026-02-10 12:02:51 - PongServer - INFO - Scanning for peers...
+2026-02-10 12:02:51 - DiscoveryProtocol - INFO - Discovery listener started for server 681a116d
+2026-02-10 12:02:51 - DiscoveryProtocol - INFO - Discovered server 681a116d at 10.104.41.213
+2026-02-10 12:02:53 - DiscoveryProtocol - INFO - Discovery complete — found 1 server(s)
+2026-02-10 12:02:53 - PongServer - INFO - Found peers: []
+2026-02-10 12:02:53 - PongServer - INFO - I am the initial leader (681a116d)
+2026-02-10 12:02:55 - PongServer - INFO - Peer joined: 84bb46bb from 10.104.41.184
+2026-02-10 12:02:58 - PongServer - INFO - Peer joined: 71887063 from 10.104.41.94
+2026-02-10 12:03:09 - PongServer - INFO - Shutting down server...

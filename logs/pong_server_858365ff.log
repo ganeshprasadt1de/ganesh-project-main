@@ -1,0 +1,10 @@
+2026-02-10 09:46:21 - MainServer - INFO - Starting Pong server 858365ff
+2026-02-10 09:46:21 - MainServer - INFO - Logs saved to: logs\pong_server_858365ff.log
+2026-02-10 09:46:21 - PongServer - INFO - Starting server 858365ff ...
+2026-02-10 09:46:21 - PongServer - INFO - Scanning for peers...
+2026-02-10 09:46:21 - DiscoveryProtocol - INFO - Discovery listener started for server 858365ff
+2026-02-10 09:46:21 - DiscoveryProtocol - INFO - Discovered server 858365ff at 192.168.0.101
+2026-02-10 09:46:23 - DiscoveryProtocol - INFO - Discovery complete — found 1 server(s)
+2026-02-10 09:46:23 - PongServer - INFO - Found peers: []
+2026-02-10 09:46:23 - PongServer - INFO - I am the initial leader (858365ff)
+2026-02-10 09:46:30 - PongServer - INFO - Shutting down server...

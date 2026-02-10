@@ -4,7 +4,7 @@ import time
 from discovery import client_discover_servers
 from common import (
     make_udp_socket, send_message, recv_message,
-    CLIENT_PORT, MSG_GAME_INPUT, MSG_GAME_UPDATE
+    CLIENT_PORT, MSG_GAME_INPUT, MSG_GAME_UPDATE, MSG_ROOM_READY
 )
 
 SCREEN_WIDTH = 800
@@ -13,75 +13,75 @@ WHITE = (255, 255, 255)
 BLACK = (0, 0, 0)
 RED = (255, 0, 0)
 
-# Timeout in seconds before client decides server is dead
 SERVER_TIMEOUT = 2.0 
 
 class PongClient:
     def __init__(self, player: int):
         self.player = player
         self.sock = make_udp_socket(bind_ip="0.0.0.0", bind_port=0)
-        self.server_addr = None # Will be set in _reconnect or _find_server
+        self.server_addr = None
         self.state = None
         self.running = True
         self.font = None 
+        self.room_ready = False
+        self.game_over = False
+        self.log_connections_only = True
         
-        # FAULT TOLERANCE: Track when we last heard from server
-        self.last_update_time = 0 
+        self.last_update_time = 0
+        self.last_seq = -1
 
     def _find_server(self):
-        """Blocking search for a server."""
-        print(f"[CLIENT {self.player}] Scanning for servers...")
+        if not self.log_connections_only:
+            print(f"[CLIENT {self.player}] Scanning for servers...")
         while True:
-            # Check for quit events so we don't hang if user closes window during search
             if pygame.get_init():
                 for event in pygame.event.get():
                     if event.type == pygame.QUIT:
                         self.running = False
                         return None
 
-            found = client_discover_servers(timeout=1.0) # Short timeout for responsiveness
+            found = client_discover_servers(timeout=1.0)
             if found:
                 sid, sip = found[0]
                 print(f"[CLIENT] Found server {sid} at {sip}")
                 return (sip, CLIENT_PORT)
             
-            # Optional: Visual feedback in console
-            print(".", end="", flush=True)
+            if not self.log_connections_only:
+                print(".", end="", flush=True)
 
     def _reconnect(self, screen=None):
-        """Called when connection is lost. Loops until a new server is found."""
-        print("\n[CLIENT] Connection lost! Reconnecting...")
+        if not self.log_connections_only:
+            print("\n[CLIENT] Connection lost! Reconnecting...")
         self.server_addr = None
         
         while self.server_addr is None and self.running:
-            # Draw "Reconnecting" screen
             if screen and self.font:
                 screen.fill(BLACK)
-                text = self.font.render("Connection Lost...", True, RED)
-                text2 = self.font.render("Searching for new Server...", True, WHITE)
-                screen.blit(text, (SCREEN_WIDTH//2 - 150, SCREEN_HEIGHT//2 - 30))
-                screen.blit(text2, (SCREEN_WIDTH//2 - 200, SCREEN_HEIGHT//2 + 20))
+                text = self.font.render("Waiting for opponent...", True, WHITE)
+                screen.blit(text, (SCREEN_WIDTH//2 - 200, SCREEN_HEIGHT//2))
                 pygame.display.flip()
 
-            # Attempt discovery
             self.server_addr = self._find_server()
         
-        # Once found, announce presence immediately
         if self.server_addr:
             self.last_update_time = time.time()
+            self.last_seq = -1
+            self.state = None
+            self.room_ready = False
             self._announce()
+            self._wait_for_room_ready(screen)
 
     def start(self):
-        # Initial connection
         self.server_addr = self._find_server()
         if self.server_addr:
             self.last_update_time = time.time()
             self._announce()
-            self.game_loop()
+            if self._wait_for_room_ready():
+                self.game_loop()
+        self._shutdown()
 
     def _announce(self):
         if self.server_addr:
-            # Send initial input 0 to register the player with the new server/leader
             send_message(self.sock, self.server_addr, {"type": MSG_GAME_INPUT, "player": self.player, "dir": 0})
 
     def send_input(self, direction: int):
@@ -89,16 +89,26 @@ class PongClient:
             send_message(self.sock, self.server_addr, {"type": MSG_GAME_INPUT, "player": self.player, "dir": direction})
 
     def receive_updates(self):
-        self.sock.settimeout(0.001)
-        try:
-            msg, _ = recv_message(self.sock)
-        except Exception:
-            return
+        self.sock.settimeout(0.001)     
+        while True:
+            try:
+                msg, _ = recv_message(self.sock)
+                msg_type = msg.get("type")
+                
+                if msg_type == MSG_GAME_UPDATE:
+                    seq = msg.get("seq", -1)
 
-        if msg.get("type") == MSG_GAME_UPDATE:
-            self.state = msg.get("state")
-            # FAULT TOLERANCE: Update watchdog timestamp
-            self.last_update_time = time.time()
+                    if seq > self.last_seq:
+                        self.last_seq = seq
+                        self.state = msg.get("state")
+                        self.last_update_time = time.time()
+
+                elif msg_type == "GAME_OVER":
+                    self._handle_game_over()
+                    return
+            
+            except Exception:
+                break
 
     def draw(self, screen):
         if not self.state:
@@ -127,22 +137,24 @@ class PongClient:
 
         pygame.display.flip()
 
-    def game_loop(self):
-        pygame.init()
-        pygame.font.init()
-        screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
+    def game_loop(self, screen=None, clock=None):
+        if not pygame.get_init():
+            pygame.init()
+            pygame.font.init()
+        if screen is None:
+            screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
         pygame.display.set_caption(f"Pong Player {self.player}")
-        clock = pygame.time.Clock()
-        self.font = pygame.font.Font(None, 50)
+        if clock is None:
+            clock = pygame.time.Clock()
+        if self.font is None:
+            self.font = pygame.font.Font(None, 50)
         
         while self.running:
-            # 1. Check Watchdog (Fault Tolerance)
             if time.time() - self.last_update_time > SERVER_TIMEOUT:
                 self._reconnect(screen)
                 clock.tick(60)
                 continue
 
-            # 2. Event Handling
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     self.running = False
@@ -152,13 +164,67 @@ class PongClient:
             if keys[pygame.K_UP]: d = -1
             elif keys[pygame.K_DOWN]: d = 1
 
-            # 3. Network & Draw
             self.send_input(d)
             self.receive_updates()
             self.draw(screen)
             clock.tick(60)
 
-        pygame.quit()
+    def _wait_for_room_ready(self, screen=None):
+        self.room_ready = False
+        last_announce = 0.0
+        if not self.log_connections_only:
+            print("[CLIENT] Waiting for opponent...")
+
+        while self.running and not self.room_ready:
+            if screen and self.font:
+                screen.fill(BLACK)
+                text = self.font.render("Waiting for opponent...", True, WHITE)
+                screen.blit(text, (SCREEN_WIDTH//2 - 200, SCREEN_HEIGHT//2))
+                pygame.display.flip()
+
+            if self.server_addr and (time.time() - last_announce) > 1.0:
+                self._announce()
+                last_announce = time.time()
+
+            self.sock.settimeout(0.5)
+            try:
+                msg, _ = recv_message(self.sock)
+            except Exception:
+                continue
+
+            msg_type = msg.get("type")
+            if msg_type == MSG_ROOM_READY:
+                self.room_ready = True
+                self.last_update_time = time.time()
+                return True
+
+            if msg_type == MSG_GAME_UPDATE:
+                seq = msg.get("seq", -1)
+                if seq > self.last_seq:
+                    self.last_seq = seq
+                    self.state = msg.get("state")
+                    self.last_update_time = time.time()
+                self.room_ready = True
+                return True
+
+            if msg_type == "GAME_OVER":
+                self._handle_game_over()
+                return False
+
+        return False
+
+    def _handle_game_over(self):
+        print("Game Over. Closing client.")
+        self.game_over = True
+        self.running = False
+
+    def _shutdown(self):
+        try:
+            self.sock.close()
+        except Exception:
+            pass
+        if pygame.get_init():
+            pygame.quit()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

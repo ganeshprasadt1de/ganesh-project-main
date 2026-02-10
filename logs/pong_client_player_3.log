@@ -1,0 +1,6 @@
+2026-02-10 11:08:52 - MainClient - INFO - Starting Pong client — Player 3
+2026-02-10 11:08:52 - MainClient - INFO - Logs saved to: logs\pong_client_player_3.log
+2026-02-10 11:08:52 - PongClient - INFO - [Player 3] Scanning for servers...
+2026-02-10 11:08:53 - PongClient - INFO - Found server c0ac9eaa at 192.168.0.97
+2026-02-10 11:08:53 - PongClient - INFO - Waiting for opponent...
+2026-02-10 11:08:53 - PongClient - INFO - Room is ready — game starting!

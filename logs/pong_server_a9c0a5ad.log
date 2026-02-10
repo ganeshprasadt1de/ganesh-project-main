@@ -1,0 +1,37 @@
+2026-02-10 10:21:57 - MainServer - INFO - Starting Pong server a9c0a5ad
+2026-02-10 10:21:57 - MainServer - INFO - Logs saved to: logs\pong_server_a9c0a5ad.log
+2026-02-10 10:21:57 - PongServer - INFO - Starting server a9c0a5ad ...
+2026-02-10 10:21:57 - PongServer - INFO - Scanning for peers...
+2026-02-10 10:21:57 - DiscoveryProtocol - INFO - Discovery listener started for server a9c0a5ad
+2026-02-10 10:21:57 - DiscoveryProtocol - INFO - Discovered server a9c0a5ad at 192.168.0.16
+2026-02-10 10:21:57 - DiscoveryProtocol - INFO - Discovered server 6d5babe5 at 192.168.0.97
+2026-02-10 10:21:57 - DiscoveryProtocol - INFO - Discovered server ec1b6690 at 192.168.0.195
+2026-02-10 10:21:59 - DiscoveryProtocol - INFO - Discovery complete — found 3 server(s)
+2026-02-10 10:21:59 - PongServer - INFO - Found peers: [('6d5babe5', '192.168.0.97'), ('ec1b6690', '192.168.0.195')]
+2026-02-10 10:22:00 - PongServer - INFO - Waiting for leader announcement...
+2026-02-10 10:22:00 - PongServer - INFO - Leader confirmed: 6d5babe5
+2026-02-10 10:22:24 - PongServer - INFO - Created room 0
+2026-02-10 10:22:26 - PongServer - INFO - Created room 1
+2026-02-10 10:22:26 - PongServer - INFO - Created room 2
+2026-02-10 10:22:37 - PongServer - WARNING - Leader timeout! Scheduling election (jittered).
+2026-02-10 10:22:37 - BullyElection - INFO - Scheduling election in 0.20s (jitter)
+2026-02-10 10:22:37 - BullyElection - INFO - Starting election after jitter delay.
+2026-02-10 10:22:37 - BullyElection - INFO - Starting election (server=a9c0a5ad)
+2026-02-10 10:22:37 - BullyElection - INFO - New leader elected: ec1b6690
+2026-02-10 10:22:37 - PongServer - INFO - Leader confirmed: ec1b6690
+2026-02-10 10:22:40 - PongServer - WARNING - Pruning dead peer: 6d5babe5
+2026-02-10 10:23:02 - PongServer - INFO - Closing room 0 (leader request)
+2026-02-10 10:23:02 - PongServer - INFO - Created room 0
+2026-02-10 10:23:04 - PongServer - INFO - Closing room 2 (leader request)
+2026-02-10 10:23:04 - PongServer - INFO - Created room 2
+2026-02-10 10:23:20 - PongServer - WARNING - Leader timeout! Scheduling election (jittered).
+2026-02-10 10:23:20 - BullyElection - INFO - Scheduling election in 0.51s (jitter)
+2026-02-10 10:23:20 - BullyElection - INFO - Starting election after jitter delay.
+2026-02-10 10:23:20 - BullyElection - INFO - Starting election (server=a9c0a5ad)
+2026-02-10 10:23:23 - PongServer - WARNING - Pruning dead peer: ec1b6690
+2026-02-10 10:23:23 - BullyElection - WARNING - *** I AM LEADER NOW (a9c0a5ad) ***
+2026-02-10 10:23:23 - PongServer - INFO - Leader confirmed: a9c0a5ad
+2026-02-10 10:23:23 - PongServer - INFO - Room 1: players=set() score=0-0
+2026-02-10 10:23:23 - PongServer - INFO - Room 0: players=set() score=0-0
+2026-02-10 10:23:23 - PongServer - INFO - Room 2: players=set() score=0-0
+2026-02-10 10:23:24 - PongServer - INFO - Shutting down server...

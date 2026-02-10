@@ -1,0 +1,22 @@
+2026-02-10 11:06:31 - MainServer - INFO - Starting Pong server c0ac9eaa
+2026-02-10 11:06:31 - MainServer - INFO - Logs saved to: logs\pong_server_c0ac9eaa.log
+2026-02-10 11:06:31 - PongServer - INFO - Starting server c0ac9eaa ...
+2026-02-10 11:06:31 - PongServer - INFO - Scanning for peers...
+2026-02-10 11:06:31 - DiscoveryProtocol - INFO - Discovery listener started for server c0ac9eaa
+2026-02-10 11:06:31 - DiscoveryProtocol - INFO - Discovered server c0ac9eaa at 192.168.0.97
+2026-02-10 11:06:31 - DiscoveryProtocol - INFO - Discovered server 30addb94 at 192.168.0.16
+2026-02-10 11:06:31 - DiscoveryProtocol - INFO - Discovered server b9dcac1d at 192.168.0.195
+2026-02-10 11:06:33 - DiscoveryProtocol - INFO - Discovery complete — found 3 server(s)
+2026-02-10 11:06:33 - PongServer - INFO - Found peers: [('30addb94', '192.168.0.16'), ('b9dcac1d', '192.168.0.195')]
+2026-02-10 11:06:34 - PongServer - INFO - Waiting for leader announcement...
+2026-02-10 11:06:34 - PongServer - INFO - Leader confirmed: b9dcac1d
+2026-02-10 11:07:16 - PongServer - INFO - Created room 0
+2026-02-10 11:07:23 - PongServer - INFO - Created room 1
+2026-02-10 11:09:08 - PongServer - WARNING - Leader timeout! Scheduling election (jittered).
+2026-02-10 11:09:08 - BullyElection - INFO - Scheduling election in 0.87s (jitter)
+2026-02-10 11:09:09 - BullyElection - INFO - Starting election after jitter delay.
+2026-02-10 11:09:09 - BullyElection - INFO - Starting election (server=c0ac9eaa)
+2026-02-10 11:09:09 - BullyElection - WARNING - *** I AM LEADER NOW (c0ac9eaa) ***
+2026-02-10 11:09:09 - PongServer - INFO - Room 0: players=set() score=0-1
+2026-02-10 11:09:09 - PongServer - INFO - Room 1: players=set() score=0-0
+2026-02-10 11:10:01 - PongServer - INFO - Shutting down server...

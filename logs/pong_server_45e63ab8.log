@@ -1,0 +1,22 @@
+2026-02-10 12:04:22 - MainServer - INFO - Starting Pong server 45e63ab8
+2026-02-10 12:04:22 - MainServer - INFO - Logs saved to: logs\pong_server_45e63ab8.log
+2026-02-10 12:04:22 - PongServer - INFO - Starting server 45e63ab8 ...
+2026-02-10 12:04:22 - PongServer - INFO - Scanning for peers...
+2026-02-10 12:04:22 - DiscoveryProtocol - INFO - Discovery listener started for server 45e63ab8
+2026-02-10 12:04:22 - DiscoveryProtocol - INFO - Discovered server 45e63ab8 at 10.104.41.213
+2026-02-10 12:04:22 - DiscoveryProtocol - INFO - Discovered server 288ab963 at 10.104.41.184
+2026-02-10 12:04:24 - DiscoveryProtocol - INFO - Discovery complete — found 2 server(s)
+2026-02-10 12:04:24 - PongServer - INFO - Found peers: [('288ab963', '10.104.41.184')]
+2026-02-10 12:04:25 - PongServer - INFO - Waiting for leader announcement...
+2026-02-10 12:04:25 - PongServer - INFO - Leader confirmed: 288ab963
+2026-02-10 12:04:29 - PongServer - INFO - Peer joined: 85ce3c83 from 10.104.41.94
+2026-02-10 12:04:43 - BullyElection - INFO - New leader elected: 85ce3c83
+2026-02-10 12:04:43 - PongServer - INFO - Leader confirmed: 85ce3c83
+2026-02-10 12:04:46 - PongServer - WARNING - Pruning dead peer: 288ab963
+2026-02-10 12:04:55 - PongServer - WARNING - Leader timeout! Scheduling election (jittered).
+2026-02-10 12:04:55 - BullyElection - INFO - Scheduling election in 0.46s (jitter)
+2026-02-10 12:04:55 - BullyElection - INFO - Starting election after jitter delay.
+2026-02-10 12:04:55 - BullyElection - INFO - Starting election (server=45e63ab8)
+2026-02-10 12:04:58 - BullyElection - WARNING - *** I AM LEADER NOW (45e63ab8) ***
+2026-02-10 12:04:58 - PongServer - WARNING - Pruning dead peer: 85ce3c83
+2026-02-10 12:04:59 - PongServer - INFO - Leader confirmed: 45e63ab8

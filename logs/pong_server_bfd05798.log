@@ -1,0 +1,10 @@
+2026-02-10 11:10:53 - MainServer - INFO - Starting Pong server bfd05798
+2026-02-10 11:10:53 - MainServer - INFO - Logs saved to: logs\pong_server_bfd05798.log
+2026-02-10 11:10:53 - PongServer - INFO - Starting server bfd05798 ...
+2026-02-10 11:10:53 - DiscoveryProtocol - INFO - Discovery listener started for server bfd05798
+2026-02-10 11:10:53 - PongServer - INFO - Scanning for peers...
+2026-02-10 11:10:53 - DiscoveryProtocol - INFO - Discovered server bfd05798 at 172.28.181.185
+2026-02-10 11:10:56 - DiscoveryProtocol - INFO - Discovery complete — found 1 server(s)
+2026-02-10 11:10:56 - PongServer - INFO - Found peers: []
+2026-02-10 11:10:56 - PongServer - INFO - I am the initial leader (bfd05798)
+2026-02-10 11:11:53 - PongServer - INFO - Shutting down server...

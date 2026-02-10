@@ -1,0 +1,10 @@
+2026-02-10 09:45:59 - MainServer - INFO - Starting Pong server c2447484
+2026-02-10 09:45:59 - MainServer - INFO - Logs saved to: logs\pong_server_c2447484.log
+2026-02-10 09:45:59 - PongServer - INFO - Starting server c2447484 ...
+2026-02-10 09:45:59 - PongServer - INFO - Scanning for peers...
+2026-02-10 09:45:59 - DiscoveryProtocol - INFO - Discovery listener started for server c2447484
+2026-02-10 09:45:59 - DiscoveryProtocol - INFO - Discovered server c2447484 at 192.168.0.101
+2026-02-10 09:46:01 - DiscoveryProtocol - INFO - Discovery complete — found 1 server(s)
+2026-02-10 09:46:01 - PongServer - INFO - Found peers: []
+2026-02-10 09:46:01 - PongServer - INFO - I am the initial leader (c2447484)
+2026-02-10 09:46:19 - PongServer - INFO - Shutting down server...

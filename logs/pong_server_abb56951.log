@@ -1,0 +1,42 @@
+2026-02-10 11:11:58 - MainServer - INFO - Starting Pong server abb56951
+2026-02-10 11:11:58 - MainServer - INFO - Logs saved to: logs\pong_server_abb56951.log
+2026-02-10 11:11:58 - PongServer - INFO - Starting server abb56951 ...
+2026-02-10 11:11:58 - DiscoveryProtocol - INFO - Discovery listener started for server abb56951
+2026-02-10 11:11:58 - PongServer - INFO - Scanning for peers...
+2026-02-10 11:11:58 - DiscoveryProtocol - INFO - Discovered server abb56951 at 192.168.0.97
+2026-02-10 11:11:58 - DiscoveryProtocol - INFO - Discovered server c8345142 at 192.168.0.195
+2026-02-10 11:11:58 - DiscoveryProtocol - INFO - Discovered server a708aae1 at 192.168.0.16
+2026-02-10 11:12:00 - DiscoveryProtocol - INFO - Discovery complete — found 3 server(s)
+2026-02-10 11:12:00 - PongServer - INFO - Found peers: [('c8345142', '192.168.0.195'), ('a708aae1', '192.168.0.16')]
+2026-02-10 11:12:01 - PongServer - INFO - Waiting for leader announcement...
+2026-02-10 11:12:02 - PongServer - WARNING - Leader unknown. Scheduling election (jittered).
+2026-02-10 11:12:02 - BullyElection - INFO - Scheduling election in 0.89s (jitter)
+2026-02-10 11:12:03 - BullyElection - INFO - Starting election after jitter delay.
+2026-02-10 11:12:03 - BullyElection - INFO - Starting election (server=abb56951)
+2026-02-10 11:12:03 - BullyElection - INFO - New leader elected: c8345142
+2026-02-10 11:12:03 - PongServer - INFO - Leader confirmed: c8345142
+2026-02-10 11:12:06 - PongServer - WARNING - Leader timeout! Scheduling election (jittered).
+2026-02-10 11:12:06 - BullyElection - INFO - Scheduling election in 0.96s (jitter)
+2026-02-10 11:12:07 - BullyElection - INFO - Starting election after jitter delay.
+2026-02-10 11:12:07 - BullyElection - INFO - Starting election (server=abb56951)
+2026-02-10 11:12:11 - PongServer - WARNING - Leader timeout! Scheduling election (jittered).
+2026-02-10 11:12:11 - BullyElection - INFO - Scheduling election in 0.99s (jitter)
+2026-02-10 11:12:12 - BullyElection - INFO - Starting election after jitter delay.
+2026-02-10 11:12:12 - BullyElection - INFO - Starting election (server=abb56951)
+2026-02-10 11:12:15 - PongServer - WARNING - Leader timeout! Scheduling election (jittered).
+2026-02-10 11:12:15 - BullyElection - INFO - Scheduling election in 0.83s (jitter)
+2026-02-10 11:12:16 - BullyElection - INFO - Starting election after jitter delay.
+2026-02-10 11:12:16 - BullyElection - INFO - Starting election (server=abb56951)
+2026-02-10 11:12:19 - PongServer - WARNING - Leader timeout! Scheduling election (jittered).
+2026-02-10 11:12:19 - BullyElection - INFO - Scheduling election in 0.61s (jitter)
+2026-02-10 11:12:20 - BullyElection - INFO - Starting election after jitter delay.
+2026-02-10 11:12:20 - BullyElection - INFO - Starting election (server=abb56951)
+2026-02-10 11:12:23 - PongServer - WARNING - Leader timeout! Scheduling election (jittered).
+2026-02-10 11:12:23 - BullyElection - INFO - Scheduling election in 0.61s (jitter)
+2026-02-10 11:12:24 - BullyElection - INFO - Starting election after jitter delay.
+2026-02-10 11:12:24 - BullyElection - INFO - Starting election (server=abb56951)
+2026-02-10 11:12:27 - PongServer - WARNING - Leader timeout! Scheduling election (jittered).
+2026-02-10 11:12:27 - BullyElection - INFO - Scheduling election in 0.58s (jitter)
+2026-02-10 11:12:28 - BullyElection - INFO - Starting election after jitter delay.
+2026-02-10 11:12:28 - BullyElection - INFO - Starting election (server=abb56951)
+2026-02-10 11:12:30 - PongServer - INFO - Shutting down server...

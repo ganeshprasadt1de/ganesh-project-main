@@ -1,0 +1,52 @@
+2026-02-10 11:44:54 - MainServer - INFO - Starting Pong server 0daf9072
+2026-02-10 11:44:54 - MainServer - INFO - Logs saved to: logs\pong_server_0daf9072.log
+2026-02-10 11:44:54 - PongServer - INFO - Starting server 0daf9072 ...
+2026-02-10 11:44:54 - PongServer - INFO - Scanning for peers...
+2026-02-10 11:44:54 - DiscoveryProtocol - INFO - Discovery listener started for server 0daf9072
+2026-02-10 11:44:54 - DiscoveryProtocol - INFO - Discovered server 0daf9072 at 192.168.0.97
+2026-02-10 11:44:54 - DiscoveryProtocol - INFO - Discovered server ee4ea4d5 at 192.168.0.16
+2026-02-10 11:44:54 - DiscoveryProtocol - INFO - Discovered server bda8cbbb at 192.168.0.195
+2026-02-10 11:44:56 - DiscoveryProtocol - INFO - Discovery complete — found 3 server(s)
+2026-02-10 11:44:56 - PongServer - INFO - Found peers: [('ee4ea4d5', '192.168.0.16'), ('bda8cbbb', '192.168.0.195')]
+2026-02-10 11:44:57 - PongServer - INFO - Waiting for leader announcement...
+2026-02-10 11:44:57 - BullyElection - INFO - New leader elected: ee4ea4d5
+2026-02-10 11:44:57 - PongServer - INFO - Leader confirmed: ee4ea4d5
+2026-02-10 11:46:02 - PongServer - WARNING - Leader timeout! Scheduling election (jittered).
+2026-02-10 11:46:02 - BullyElection - INFO - Scheduling election in 0.54s (jitter)
+2026-02-10 11:46:02 - BullyElection - INFO - Starting election after jitter delay.
+2026-02-10 11:46:02 - BullyElection - INFO - Starting election (server=0daf9072)
+2026-02-10 11:46:05 - PongServer - WARNING - Pruning dead peer: ee4ea4d5
+2026-02-10 11:46:05 - BullyElection - WARNING - *** I AM LEADER NOW (0daf9072) ***
+2026-02-10 11:46:06 - PongServer - INFO - Leader confirmed: 0daf9072
+2026-02-10 11:46:10 - PongServer - INFO - Peer joined: 7ce1b6d6 from 192.168.0.16
+2026-02-10 11:46:19 - PongServer - INFO - Discovered peer 6f4be2aa via heartbeat
+2026-02-10 11:46:19 - PongServer - INFO - Leader confirmed: 6f4be2aa
+2026-02-10 11:46:25 - BullyElection - INFO - New leader elected: 7ce1b6d6
+2026-02-10 11:46:25 - PongServer - INFO - Leader confirmed: 7ce1b6d6
+2026-02-10 11:46:32 - PongServer - WARNING - Pruning dead peer: 6f4be2aa
+2026-02-10 11:47:51 - PongServer - WARNING - Leader timeout! Scheduling election (jittered).
+2026-02-10 11:47:51 - BullyElection - INFO - Scheduling election in 0.98s (jitter)
+2026-02-10 11:47:52 - BullyElection - INFO - Starting election after jitter delay.
+2026-02-10 11:47:52 - BullyElection - INFO - Starting election (server=0daf9072)
+2026-02-10 11:47:54 - PongServer - WARNING - Pruning dead peer: 7ce1b6d6
+2026-02-10 11:47:54 - BullyElection - WARNING - *** I AM LEADER NOW (0daf9072) ***
+2026-02-10 11:47:55 - PongServer - INFO - Leader confirmed: 0daf9072
+2026-02-10 11:48:17 - PongServer - INFO - Peer joined: c2e9efe7 from 192.168.0.195
+2026-02-10 11:48:25 - PongServer - INFO - Peer joined: 7ea27de1 from 192.168.0.16
+2026-02-10 11:49:26 - BullyElection - INFO - New leader elected: c2e9efe7
+2026-02-10 11:49:26 - PongServer - INFO - Leader confirmed: c2e9efe7
+2026-02-10 11:51:13 - PongServer - WARNING - Leader timeout! Scheduling election (jittered).
+2026-02-10 11:51:13 - BullyElection - INFO - Scheduling election in 0.45s (jitter)
+2026-02-10 11:51:13 - BullyElection - INFO - Starting election after jitter delay.
+2026-02-10 11:51:13 - BullyElection - INFO - Starting election (server=0daf9072)
+2026-02-10 11:51:16 - BullyElection - INFO - Starting election (server=0daf9072)
+2026-02-10 11:51:16 - PongServer - WARNING - Pruning dead peer: c2e9efe7
+2026-02-10 11:51:16 - BullyElection - INFO - New leader elected: 7ea27de1
+2026-02-10 11:51:16 - PongServer - INFO - Leader confirmed: 7ea27de1
+2026-02-10 11:52:34 - PongServer - WARNING - Leader timeout! Scheduling election (jittered).
+2026-02-10 11:52:34 - BullyElection - INFO - Scheduling election in 0.87s (jitter)
+2026-02-10 11:52:35 - BullyElection - INFO - Starting election after jitter delay.
+2026-02-10 11:52:35 - BullyElection - INFO - Starting election (server=0daf9072)
+2026-02-10 11:52:37 - PongServer - WARNING - Pruning dead peer: 7ea27de1
+2026-02-10 11:52:37 - BullyElection - WARNING - *** I AM LEADER NOW (0daf9072) ***
+2026-02-10 11:52:39 - PongServer - INFO - Leader confirmed: 0daf9072
