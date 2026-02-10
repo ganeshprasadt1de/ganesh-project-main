@@ -8,29 +8,18 @@ from common import (
 )
 
 def get_smart_broadcast_ip():
-    """
-    Automatically calculates the subnet broadcast address (e.g., 10.154.170.255)
-    based on the current machine's IP. This fixes the Windows Hotspot issue.
-    """
     try:
-        # We connect to a public DNS to find out which interface has Internet/Network.
-        # We don't actually send data, just checking the route.
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("8.8.8.8", 80))
         my_ip = s.getsockname()[0]
         s.close()
         
-        # Assume standard Home/Hotspot /24 subnet (255.255.255.0)
-        # We take "10.154.170.213" -> "10.154.170.255"
         base_ip = my_ip.rsplit('.', 1)[0]
         return f"{base_ip}.255"
     except Exception:
-        # Fallback if something goes wrong
         return "255.255.255.255"
 
 def server_discovery_listener(server_id: str, stop_event=None):
-    # Bind to 0.0.0.0 to listen on ALL interfaces
-    # Use the dynamically calculated discovery port (with offset)
     from common import get_discovery_port
     discovery_port = get_discovery_port()
     sock = make_udp_socket(bind_ip="0.0.0.0", bind_port=discovery_port, broadcast=True)
@@ -47,7 +36,6 @@ def server_discovery_listener(server_id: str, stop_event=None):
                 continue
 
             if msg.get("type") == MSG_DISCOVER_REQUEST:
-                # Reply directly to the sender
                 reply = {"type": MSG_DISCOVER_RESPONSE, "id": server_id}
                 try:
                     send_message(sock, addr, reply)
@@ -57,13 +45,6 @@ def server_discovery_listener(server_id: str, stop_event=None):
         sock.close()
 
 def client_discover_servers(timeout: float = 2.0, max_port_offset: int = 10) -> List[Tuple[str, str]]:
-    """
-    Discover servers by broadcasting to multiple discovery ports.
-    
-    Args:
-        timeout: How long to wait for responses
-        max_port_offset: Maximum port offset to scan (scans 0 to max_port_offset)
-    """
     results = []
     start = time.time()
     sock = make_udp_socket(bind_ip="0.0.0.0", bind_port=0, broadcast=True)
@@ -72,25 +53,20 @@ def client_discover_servers(timeout: float = 2.0, max_port_offset: int = 10) -> 
     request = {"type": MSG_DISCOVER_REQUEST}
     encoded_req = json.dumps(request).encode()
     
-    # --- SMART BROADCAST STRATEGY WITH MULTIPLE PORTS ---
-    # Scan multiple ports to find servers with different port offsets
     subnet_bcast = get_smart_broadcast_ip()
     
     for port_offset in range(max_port_offset + 1):
         discovery_port = DISCOVERY_BROADCAST_PORT + port_offset
         
-        # 1. Send to the calculated Subnet Broadcast (Fixes Hotspot/Windows)
         try:
             sock.sendto(encoded_req, (subnet_bcast, discovery_port))
         except Exception:
             pass
 
-        # 2. Send to Global Broadcast (Backup for standard routers)
         try:
             sock.sendto(encoded_req, ("<broadcast>", discovery_port))
         except Exception:
             pass
-    # --------------------------------
 
     try:
         while time.time() - start < timeout:

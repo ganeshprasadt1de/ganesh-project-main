@@ -14,28 +14,24 @@ WHITE = (255, 255, 255)
 BLACK = (0, 0, 0)
 RED = (255, 0, 0)
 
-# Timeout in seconds before client decides server is dead
-SERVER_TIMEOUT = 3.0  # Reduced from 6.0 for faster failover 
+SERVER_TIMEOUT = 3.0 
 
 class PongClient:
     def __init__(self, player: int):
         self.player = player
         self.sock = make_udp_socket(bind_ip="0.0.0.0", bind_port=0)
-        self.server_addr = None # Will be set in _reconnect or _find_server
+        self.server_addr = None
         self.state = None
         self.running = True
         self.font = None 
         
-        # FAULT TOLERANCE: Track when we last heard from server
         self.last_update_time = 0
         self.last_seq = -1
         
-        # Track if both players in our room have joined
         self.both_players_ready = False
         self.waiting_for_players = True
 
     def _find_server(self):
-        """Blocking search for a server."""
         print(f"[CLIENT {self.player}] Scanning for servers...")
         while True:
             found = client_discover_servers(timeout=1.0)
@@ -44,11 +40,9 @@ class PongClient:
                 print(f"[CLIENT {self.player}] Found server {sid} at {sip}")
                 return (sip, CLIENT_PORT)
             
-            # Brief pause before retry
             time.sleep(0.5)
 
     def start(self):
-        # Initial connection (no pygame window yet)
         while self.running:
             print(f"[CLIENT {self.player}] Connecting to server...")
             self.server_addr = self._find_server()
@@ -58,13 +52,11 @@ class PongClient:
             self.last_update_time = time.time()
             self._announce()
             
-            # Wait for both players before opening pygame window
             print(f"[CLIENT {self.player}] Waiting for both players to join...")
             self.waiting_for_players = True
             self.both_players_ready = False
             
             while self.waiting_for_players and self.running:
-                # Check for state updates
                 self.sock.settimeout(0.1)
                 try:
                     msg, _ = recv_message(self.sock)
@@ -74,8 +66,6 @@ class PongClient:
                             self.last_seq = seq
                             self.state = msg.get("state")
                             self.last_update_time = time.time()
-                            # Wait for seq > 0, which indicates the game has started
-                            # (server increments seq when game steps with both players)
                             if seq > 0:
                                 self.waiting_for_players = False
                                 self.both_players_ready = True
@@ -84,25 +74,20 @@ class PongClient:
                 except Exception:
                     pass
                 
-                # Check for server timeout during waiting
                 if time.time() - self.last_update_time > SERVER_TIMEOUT:
                     print(f"[CLIENT {self.player}] Server timeout during waiting, reconnecting...")
-                    break  # Break inner loop to reconnect
+                    break
                 
-                # Send periodic inputs to keep connection alive
                 self.send_input(0)
                 time.sleep(0.5)
             
-            # If both players ready, start the game loop
             if self.both_players_ready:
                 self.game_loop()
-                # If game loop exits due to timeout, we'll reconnect
                 if self.running:
-                    continue  # Reconnect and wait again
+                    continue
 
     def _announce(self):
         if self.server_addr:
-            # Send initial input 0 to register the player with the new server/leader
             send_message(self.sock, self.server_addr, {"type": MSG_GAME_INPUT, "player": self.player, "dir": 0})
 
     def send_input(self, direction: int):
@@ -113,31 +98,22 @@ class PongClient:
         self.sock.settimeout(0.001)     
         while True:
             try:
-                # Keep reading until the socket raises an exception (is empty)
                 msg, _ = recv_message(self.sock)
                 
-                # Update state if valid
                 if msg.get("type") == MSG_GAME_UPDATE:
                     seq = msg.get("seq", -1)
 
-                    # Only process if this packet is newer than what we have
                     if seq > self.last_seq:
                         self.last_seq = seq
                         self.state = msg.get("state")
-                        # Update watchdog
                         self.last_update_time = time.time()
 
-                # =====================================================
-                # POISON PILL → terminate client immediately
-                # =====================================================
                 elif msg.get("type") == "GAME_OVER":
                     print("Game Over. Closing client.")
                     pygame.quit()
                     sys.exit(0)
-                # =====================================================
             
             except Exception:
-                # No more data in the socket buffer, break the loop
                 break
 
     def draw(self, screen):
@@ -176,13 +152,11 @@ class PongClient:
         self.font = pygame.font.Font(None, 50)
         
         while self.running:
-            # 1. Check Watchdog (Fault Tolerance)
             if time.time() - self.last_update_time > SERVER_TIMEOUT:
                 print(f"[CLIENT {self.player}] Server timeout detected")
                 pygame.quit()
-                return  # Exit game_loop to reconnect in start()
+                return
 
-            # 2. Event Handling
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     self.running = False
@@ -192,7 +166,6 @@ class PongClient:
             if keys[pygame.K_UP]: d = -1
             elif keys[pygame.K_DOWN]: d = 1
 
-            # 3. Network & Draw
             self.send_input(d)
             self.receive_updates()
             self.draw(screen)

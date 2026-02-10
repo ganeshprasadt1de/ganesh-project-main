@@ -17,19 +17,11 @@ from game_state import GameState
 from discovery import server_discovery_listener, client_discover_servers
 
 
-# ================================
-# NEW: snapshot sync message types
-# ================================
 MSG_STATE_SNAPSHOT_REQUEST = "STATE_SNAPSHOT_REQUEST"
 MSG_STATE_SNAPSHOT_RESPONSE = "STATE_SNAPSHOT_RESPONSE"
-# ================================
 
 
-# =====================================================
-# NEW: multi-room replication message (ADDITION ONLY)
-# =====================================================
 MSG_ROOMS_UPDATE = "ROOMS_UPDATE"
-# =====================================================
 MSG_ACK = "ACK"
 MSG_NACK = "NACK"
 
@@ -38,15 +30,11 @@ MSG_GAME_OVER = "GAME_OVER"
 WIN_SCORE = 3
 
 HEARTBEAT_INTERVAL = 1.0
-HEARTBEAT_TIMEOUT = 5.0  # Increased from 3.0 to reduce false positives
+HEARTBEAT_TIMEOUT = 5.0
 TICK_INTERVAL = 0.016
-ELECTION_COOLDOWN = 3.0  # Prevent repeated elections
+ELECTION_COOLDOWN = 3.0
 
 
-# =====================================================
-# NEW: ROOM ABSTRACTION (does NOT replace old logic,
-#      only encapsulates per-room state cleanly)
-# =====================================================
 class PongRoom:
     def __init__(self, room_id: int):
         self.room_id = room_id
@@ -54,12 +42,10 @@ class PongRoom:
         self.seq = 0
         self.last_seen_seq = -1
 
-        # identical fields to original server but scoped
         self.inputs = {}
         self.connected_players = set()
         self.client_addrs: Set[Tuple[str, int]] = set()
 
-    # identical stepping logic but per room
     def step(self):
         if len(self.connected_players) >= 2:
             self.game_state.step(
@@ -69,7 +55,6 @@ class PongRoom:
             self.seq += 1
 
     def apply_input(self, pid: int, direction: int):
-        # normalize GLOBAL pid -> LOCAL (1 or 2)
         local_pid = ((pid - 1) % 2) + 1
         self.inputs[local_pid] = direction
         self.connected_players.add(local_pid)
@@ -85,16 +70,11 @@ class PongRoom:
         self.game_state = GameState.from_dict(state_dict)
 
 
-# =====================================================
-# ORIGINAL SERVER (UNCHANGED STRUCTURE)
-# Only ADDITIONS were inserted below
-# =====================================================
 class PongServer:
     def __init__(self):
         self.server_id = str(uuid.uuid4())
         self.peers: Dict[str, Tuple[str, int]] = {}
 
-        # Use dynamic port functions instead of constants
         self.control_port = get_server_control_port()
         self.client_port = get_client_port()
         
@@ -103,69 +83,35 @@ class PongServer:
 
         self.leader_id = self.server_id
 
-        # =====================================================
-        # ORIGINAL (kept for backward compatibility)
-        # =====================================================
         self.game_state = GameState()
 
-        # =====================================================
-        # NEW: room dictionary (sharded architecture)
-        # room_id -> PongRoom
-        # =====================================================
         self.rooms: Dict[int, PongRoom] = {}
 
         self.inputs = {1: 0, 2: 0}
         self.connected_players = set()
         self.client_addrs: Set[Tuple[str, int]] = set()
 
-        self.last_heartbeat_from_leader = time.monotonic()  # Use monotonic for stability
+        self.last_heartbeat_from_leader = time.monotonic()
         self.running = True
         self.election_active = False
-        self.last_election_time = 0.0  # Track last election to add cooldown (monotonic)
-        self.finalize_timer = None  # Track election finalize timer for cancellation
-        self.timeout_with_jitter = HEARTBEAT_TIMEOUT  # Timeout threshold with jitter, recalculated on each heartbeat
+        self.last_election_time = 0.0
+        self.finalize_timer = None
+        self.timeout_with_jitter = HEARTBEAT_TIMEOUT
 
-        # ================================
-        # NEW: snapshot sync storage
-        # ================================
         self._snapshot_lock = threading.Lock()
         self._snapshot_received = None
-        # ================================
 
-        # =====================================================
-        # NEW: multi-room snapshot storage (followers replicate)
-        # =====================================================
         self._rooms_snapshot_received = None
-        # =====================================================
 
-        # ================================
-        # NEW: peer liveness timestamps (display only)
-        # ================================
         self._last_seen = {}
-        # ================================
-        # =====================================================
-        # RELIABILITY ADDITIONS
-        # pending_acks -> peers we are waiting ACKs from
-        # _last_control_msg -> last critical control packet to retry
-        # =====================================================
+        
         self.pending_acks: Set[str] = set()
         self._last_control_msg = None
-        # =====================================================
         
-        # =====================================================
-        # Election message deduplication (prevent spam)
-        # Track recent election messages to avoid processing duplicates
-        # =====================================================
-        self._recent_election_messages = {}  # {candidate_id: timestamp}
-        self._election_msg_timeout = 2.0  # Ignore duplicate election msgs within 2 seconds
-        # =====================================================
+        self._recent_election_messages = {}
+        self._election_msg_timeout = 2.0
         
-        # =====================================================
-        # CRITICAL FIX: Track servers that forward to us but we don't know about
-        # This fixes race condition where JOIN messages are lost
-        # =====================================================
         self._forwarding_servers: Set[Tuple[str, int]] = set()
-        # =====================================================
 
         self.discovery_stop = threading.Event()
         self.discovery_thread = threading.Thread(
@@ -179,16 +125,9 @@ class PongServer:
         self.heartbeat_thread = threading.Thread(target=self.heartbeat_loop, daemon=True)
         self.game_thread = threading.Thread(target=self.game_loop, daemon=True)
 
-    # =====================================================
-    # NEW: deterministic room routing helper
-    # (Players 1&2 -> room0, 3&4 -> room1, ...)
-    # =====================================================
     def _room_id_for_player(self, pid: int) -> int:
         return (pid - 1) // 2
 
-    # =====================================================
-    # NEW: fetch/create room lazily
-    # =====================================================
     def _get_room(self, room_id: int) -> PongRoom:
         room = self.rooms.get(room_id)
         if room is None:
@@ -196,21 +135,12 @@ class PongServer:
             self.rooms[room_id] = room
         return room
     
-    # ================================
-    # NEW: snapshot request helper
-    # ================================
     def _request_state_snapshot(self):
-        """
-        Ask peers for their current game state.
-        First response wins. Very small + non-invasive.
-        (ORIGINAL behavior kept for backward compatibility)
-        """
         with self._snapshot_lock:
             self._snapshot_received = None
 
         req = {"type": MSG_STATE_SNAPSHOT_REQUEST}
 
-        # Create a snapshot of peers to avoid RuntimeError
         for _, addr in list(self.peers.items()):
             send_message(self.control_sock, addr, req)
 
@@ -222,17 +152,12 @@ class PongServer:
                     break
             time.sleep(0.01)
 
-    # =====================================================
-    # NEW: multi-room snapshot request (authoritative)
-    # used for leader recovery and follower sync
-    # =====================================================
     def _request_rooms_snapshot(self):
         with self._snapshot_lock:
             self._rooms_snapshot_received = None
 
         req = {"type": MSG_STATE_SNAPSHOT_REQUEST, "rooms": True}
 
-        # Create a snapshot of peers to avoid RuntimeError
         for _, addr in list(self.peers.items()):
             send_message(self.control_sock, addr, req)
 
@@ -248,38 +173,23 @@ class PongServer:
                     break
             time.sleep(0.01)
 
-    # =====================================================
-    # NEW: build full rooms snapshot for replication
-    # =====================================================
     def _rooms_snapshot(self):
         snap = {}
         for rid, room in self.rooms.items():
             snap[rid] = {
-                # =====================================================
-                # SEQUENCER ADDITION
-                # Attach ordering version to each room snapshot
-                # =====================================================
                 "seq": room.seq,
                 "state": room.snapshot()
             }
         return snap
 
-    # ================================
-    # Helper method to add unknown peers
-    # ================================
     def _add_unknown_peer(self, sid: str, addr: Tuple[str, int]):
-        """Add a peer to the membership if not already present."""
         if sid and sid not in self.peers and sid != self.server_id:
             self.peers[sid] = (addr[0], self.control_port)
 
-    # ================================
-    # NEW: MEMBERSHIP TABLE PRINTER
-    # ================================
     def _print_membership(self):
         print("\n===== MEMBERSHIP TABLE =====")
         print(f"Self   : {self.server_id}")
         print(f"Leader : {self.leader_id}")
-        # Create a snapshot of peers to avoid RuntimeError
         peers_snapshot = list(self.peers.items())
         if not peers_snapshot:
             print("Peers  : None")
@@ -299,7 +209,6 @@ class PongServer:
         print(f"[{self.server_id}] Starting server...")
         self.discovery_thread.start()
 
-        # Start control thread BEFORE discovery so we can receive JOIN messages
         self.control_thread.start()
         self.client_thread.start()
         self.heartbeat_thread.start()
@@ -318,15 +227,9 @@ class PongServer:
         else:
             print("No peers found. I am the first server.")
 
-        # =====================================================
-        # ORIGINAL single-state snapshot (kept)
-        # =====================================================
         if self.peers:
             self._request_state_snapshot()
 
-        # =====================================================
-        # NEW: also request multi-room snapshot for safety
-        # =====================================================
         if self.peers:
             self._request_rooms_snapshot()
 
@@ -347,32 +250,25 @@ class PongServer:
         self.client_sock.close()
 
     def higher_peers(self):
-        # Create a snapshot to avoid RuntimeError
         return {sid: addr for sid, addr in list(self.peers.items()) if sid > self.server_id}
 
     def _finalize_election(self):
-        """Finalize election after timeout. Guard against race conditions."""
         if self.election_active and not self.is_leader():
             self.become_leader()
     
     def _cancel_finalize_timer(self):
-        """Cancel pending finalize timer to prevent double leadership."""
         if self.finalize_timer and self.finalize_timer.is_alive():
             self.finalize_timer.cancel()
             self.finalize_timer = None
 
     def start_election(self):
-        """Start election with cooldown and 2-server special case."""
-        # Cancel any pending timer first to prevent election spam
         self._cancel_finalize_timer()
         
-        # Check election cooldown (use monotonic time)
         now = time.monotonic()
         if now - self.last_election_time < ELECTION_COOLDOWN:
             print(f"Election cooldown active. Skipping election.")
             return
         
-        # Special case: If only 2 servers (self + 1 peer), auto-elect higher UUID
         if len(self.peers) == 1:
             peer_id = list(self.peers.keys())[0]
             if peer_id > self.server_id:
@@ -380,7 +276,6 @@ class PongServer:
                 self.leader_id = peer_id
                 self.election_active = False
                 self.last_heartbeat_from_leader = time.monotonic()
-                # Set jitter for follower timeout
                 self.timeout_with_jitter = HEARTBEAT_TIMEOUT + random.uniform(0, 1.0)
                 self._print_membership()
                 return
@@ -405,14 +300,12 @@ class PongServer:
         for _, addr in higher.items():
             send_message(self.control_sock, addr, msg)
 
-        # Add random jitter to reduce simultaneous elections
         jitter = random.uniform(0, 0.5)
         self.finalize_timer = threading.Timer(2.5 + jitter, self._finalize_election)
         self.finalize_timer.daemon = True
         self.finalize_timer.start()
 
     def become_leader(self):
-        # Cancel any pending finalize timer
         self._cancel_finalize_timer()
         
         self.leader_id = self.server_id
@@ -421,15 +314,9 @@ class PongServer:
 
         print(f"*** I AM LEADER NOW ({self.server_id}) ***")
 
-        # =====================================================
-        # ORIGINAL: pull single-state snapshot
-        # =====================================================
         if self.peers:
             self._request_state_snapshot()
 
-        # =====================================================
-        # NEW: also pull multi-room snapshot (prevents resets)
-        # =====================================================
         if self.peers:
             self._request_rooms_snapshot()
 
@@ -437,13 +324,10 @@ class PongServer:
 
         self.pending_acks = set(self.peers.keys())
         self._last_control_msg = msg
-        # Create a snapshot of peers to avoid RuntimeError
         for _, addr in list(self.peers.items()):
             send_message(self.control_sock, addr, msg)
 
-        # Send immediate heartbeat to prevent timeout
         hb = {"type": MSG_HEARTBEAT, "server_id": self.server_id}
-        # Create a snapshot of peers to avoid RuntimeError
         for _, addr in list(self.peers.items()):
             send_message(self.control_sock, addr, hb)
 
@@ -461,19 +345,13 @@ class PongServer:
 
             t = msg.get("type")
 
-            # ================================
-            # NEW: update liveness ONLY on heartbeat from LEADER
-            # ================================
             if t == MSG_HEARTBEAT:
                 sid = msg.get("server_id")
                 if sid and sid == self.leader_id:
-                    # Only update liveness for leader heartbeats
                     self._last_seen[sid] = time.time()
                     self.last_heartbeat_from_leader = time.monotonic()
-                    # Reset jitter when receiving leader heartbeat
                     self.timeout_with_jitter = HEARTBEAT_TIMEOUT + random.uniform(0, 1.0)
                 elif sid and self.leader_id is not None and sid > self.leader_id:
-                    # A higher ID peer is claiming leadership, accept it
                     self._last_seen[sid] = time.time()
                     self.leader_id = sid
                     self.last_heartbeat_from_leader = time.monotonic()
@@ -481,7 +359,6 @@ class PongServer:
                     print(f"Higher ID peer {sid} is now leader")
                     self._add_unknown_peer(sid, addr)
                 elif sid:
-                    # Still track other peers for membership, but don't reset leader timeout
                     self._last_seen[sid] = time.time()
                     self._add_unknown_peer(sid, addr)
 
@@ -514,25 +391,16 @@ class PongServer:
 
                 continue
 
-            # =====================================================
-            # ROOM LIFECYCLE ADDITION
-            # follower deletes finished room when leader commands
-            # =====================================================
             elif t == MSG_CLOSE_ROOM:
                 rid = msg.get("room_id")
                 if rid in self.rooms:
                     print(f"Closing room {rid} (leader request)")
                     self.rooms.pop(rid, None)
                 continue
-            # =====================================================
 
 
 
-            # =====================================================
-            # NEW: snapshot request handler (ROOMS + legacy)
-            # =====================================================
             if t == MSG_STATE_SNAPSHOT_REQUEST:
-                # follower replies with BOTH legacy + rooms
                 reply = {
                     "type": MSG_STATE_SNAPSHOT_RESPONSE,
                     "state": self.game_state.to_dict(),
@@ -561,7 +429,6 @@ class PongServer:
                         print(f"Peer Joined: {new_id} from {addr[0]}")
                         self.peers[new_id] = (addr[0], self.control_port)
 
-                        # Create a snapshot of peers to avoid RuntimeError
                         peers_snapshot = list(self.peers.items())
                         for pid, paddr in peers_snapshot:
                             if pid != new_id:
@@ -572,7 +439,6 @@ class PongServer:
                                     {"type": MSG_JOIN, "id": new_id}
                                 )
 
-                        # Only trigger election if higher peer joins and we're leader or follower with lower leader
                         if self.is_leader() and new_id > self.server_id:
                             print(f"Higher peer {new_id} joined. I am stepping down. Starting Election.")
                             self.start_election()
@@ -585,18 +451,14 @@ class PongServer:
             elif t == MSG_ELECTION:
                 candidate = msg.get("candidate")
                 
-                # Deduplicate election messages to prevent spam
                 now = time.time()
                 if candidate in self._recent_election_messages:
                     last_seen = self._recent_election_messages[candidate]
                     if now - last_seen < self._election_msg_timeout:
-                        # Ignore duplicate election message
                         continue
                 
-                # Record this election message
                 self._recent_election_messages[candidate] = now
                 
-                # Clean up old entries
                 self._recent_election_messages = {
                     cid: ts for cid, ts in self._recent_election_messages.items()
                     if now - ts < self._election_msg_timeout
@@ -604,47 +466,35 @@ class PongServer:
 
                 if candidate and self.server_id > candidate:
                     send_message(self.control_sock, addr, {"type": MSG_ELECTION_OK})
-                    # Only start our own election if we're not already in one
-                    # and outside the cooldown period to prevent election spam
                     now_monotonic = time.monotonic()
                     if not self.election_active and (now_monotonic - self.last_election_time >= ELECTION_COOLDOWN):
                         print(f"Received election from {candidate}, starting my own election")
                         self.start_election()
 
             elif t == MSG_ELECTION_OK:
-                # Cancel any pending finalize timer to prevent split brain
-                # MSG_ELECTION_OK is only sent by peers with higher IDs (see MSG_ELECTION handler above)
-                # This prevents us from becoming leader when a higher-ID peer is running
                 self._cancel_finalize_timer()
                 self.election_active = False
                 print(f"Received ELECTION_OK. A higher-ID peer will become leader.")
 
             elif t == MSG_COORDINATOR:
-                # Cancel any pending finalize timer
                 self._cancel_finalize_timer()
                 
                 leader_id_from_msg = msg.get("leader_id")
                 
-                # Ignore coordinator messages from ourselves
                 if leader_id_from_msg == self.server_id:
                     continue
                 
                 self.leader_id = leader_id_from_msg
                 self.election_active = False
                 self.last_heartbeat_from_leader = time.monotonic()
-                # Set jitter for follower timeout
                 self.timeout_with_jitter = HEARTBEAT_TIMEOUT + random.uniform(0, 1.0)
 
-                # Immediately acknowledge leader announcement
                 ack = {"type": MSG_ACK, "server_id": self.server_id}
                 send_message(self.control_sock, addr, ack)
 
                 print(f"New Leader Elected: {self.leader_id}")
                 self._print_membership()
 
-                # =====================================================
-                # ORIGINAL survivor push (kept)
-                # =====================================================
                 if self.game_state.score1 > 0 or self.game_state.score2 > 0:
                     leader_addr = self.peers.get(self.leader_id)
                     if leader_addr:
@@ -654,9 +504,6 @@ class PongServer:
                             {"type": MSG_GAME_UPDATE, "state": self.game_state.to_dict()}
                         )
 
-                # =====================================================
-                # NEW: push ALL room states to new leader (multi-room safe)
-                # =====================================================
                 leader_addr = self.peers.get(self.leader_id)
                 if leader_addr and self.rooms:
                     send_message(
@@ -666,9 +513,6 @@ class PongServer:
                     )
 
             elif t == MSG_GAME_UPDATE:
-                # =====================================================
-                # ORIGINAL single-state behavior (unchanged)
-                # =====================================================
                 if not self.is_leader():
                     if msg.get("state"):
                         self.game_state = GameState.from_dict(msg.get("state"))
@@ -689,9 +533,6 @@ class PongServer:
                             print("Leader: Recovering game state from survivor!")
                             self.game_state = GameState.from_dict(remote_state)
 
-            # =====================================================
-            # NEW: MULTI-ROOM replication handling
-            # =====================================================
             elif t == MSG_ROOMS_UPDATE:
                 rooms = msg.get("rooms", {})
 
@@ -718,10 +559,9 @@ class PongServer:
 
                             room.last_seen_seq = incoming_seq
 
-                        # forward ONLY to that room's clients
                         update_msg = {
                             "type": MSG_GAME_UPDATE,
-                            "seq": room.seq,   # propagate ordering to clients
+                            "seq": room.seq,
                             "state": room.game_state.to_dict()
                         }
 
@@ -729,19 +569,14 @@ class PongServer:
                             send_message(self.client_sock, c, update_msg)
 
                 elif self.is_leader():
-                    # Accept authoritative snapshot from followers during recovery
                     for rid, state in rooms.items():
                         room = self._get_room(int(rid))
                         incoming_seq = state.get("seq", -1)
-                        # Only accept if the incoming state is more recent
                         if incoming_seq > room.seq:
                             room.restore(state.get("state"))
                             room.seq = incoming_seq
                             print(f"Leader: Recovered room {rid} state from follower (seq={incoming_seq})")
 
-            # =====================================================
-            # LEADER-ONLY input handling (NOW SHARDED)
-            # =====================================================
             elif t == MSG_GAME_INPUT and self.is_leader():
                 pid = int(msg.get("player", 1))
                 direction = int(msg.get("dir", 0))
@@ -754,16 +589,7 @@ class PongServer:
 
                 room.apply_input(pid, direction)
                 
-                # =====================================================
-                # CRITICAL FIX: Auto-discover forwarding server
-                # If we receive a forwarded message from a server not in our peers,
-                # add it automatically. This fixes the race condition where JOIN 
-                # messages are lost due to SO_REUSEPORT on same machine.
-                # =====================================================
-                # Check if this message came from a server (not a client)
-                # Server messages come on control_port
                 if addr[1] == self.control_port:
-                    # This is from another server, check if we know about it
                     sender_found = False
                     for sid, (sip, sport) in self.peers.items():
                         if sip == addr[0] and sport == addr[1]:
@@ -771,40 +597,27 @@ class PongServer:
                             break
                     
                     if not sender_found:
-                        # We don't know about this server, but it's forwarding to us
-                        # This means it thinks we're the leader, so add it to peers
-                        # We'll use a placeholder ID until we get proper JOIN
                         print(f"Leader: Auto-discovered forwarding server from {addr[0]}")
-                        # Note: We can't add to peers without a server_id
-                        # Instead, we need to track the address and send updates to it
-                        # For now, we'll add it to a separate tracking dict
                         self._forwarding_servers.add(addr)
 
     def heartbeat_loop(self):
         while self.running:
             time.sleep(HEARTBEAT_INTERVAL)
 
-            # Only leader sends heartbeats
             if self.is_leader():
                 hb = {"type": MSG_HEARTBEAT, "server_id": self.server_id}
-                # Create a snapshot of peers to avoid RuntimeError
                 peers_snapshot = list(self.peers.items())
                 if peers_snapshot:
                     for _, addr in peers_snapshot:
                         send_message(self.control_sock, addr, hb)
 
-                # Retry coordinator message if peers haven't ACKed
                 if self.pending_acks and self._last_control_msg:
                     for sid in list(self.pending_acks):
                         addr = self.peers.get(sid)
                         if addr:
                             send_message(self.control_sock, addr, self._last_control_msg)
 
-            # =====================================================
-            # NEW: prune stale peers based on heartbeat timeout
-            # =====================================================
             now = time.time()
-            # Create snapshot of _last_seen to avoid RuntimeError
             stale = [
                 sid for sid, last in list(self._last_seen.items())
                 if now - last > HEARTBEAT_TIMEOUT * 2
@@ -816,22 +629,15 @@ class PongServer:
                     self.peers.pop(sid, None)
                 self._last_seen.pop(sid, None)
 
-            # Check for leader timeout (followers only)
             if not self.is_leader():
                 time_since_last_hb = time.monotonic() - self.last_heartbeat_from_leader
                 
-                # If we haven't received heartbeat recently, periodically re-announce to leader
-                # This helps in case our initial JOIN was lost (e.g., due to SO_REUSEPORT)
                 leader_addr = self.peers.get(self.leader_id)
                 if leader_addr and time_since_last_hb > HEARTBEAT_INTERVAL * 2:
-                    # Re-send JOIN every few heartbeat intervals if not receiving from leader
-                    # Only do this if we haven't fully timed out yet
                     if time_since_last_hb < self.timeout_with_jitter:
-                        # Re-send JOIN to make sure leader knows about us
                         join_msg = {"type": MSG_JOIN, "id": self.server_id}
                         send_message(self.control_sock, leader_addr, join_msg)
                 
-                # If we've fully timed out, start election
                 if time_since_last_hb > self.timeout_with_jitter:
                     print("Leader timeout! Starting election.")
                     self.start_election()
@@ -841,9 +647,6 @@ class PongServer:
             try:
                 msg, addr = recv_message(self.client_sock)
 
-                # =====================================================
-                # NEW: register client inside its ROOM (not global)
-                # =====================================================
                 if msg.get("type") == MSG_GAME_INPUT:
                     pid = int(msg.get("player", 1))
                     room_id = self._room_id_for_player(pid)
@@ -852,7 +655,6 @@ class PongServer:
                     room.add_client(addr)
 
                     if self.is_leader():
-                        # leader updates room directly
                         direction = int(msg.get("dir", 0))
 
                         if pid not in room.connected_players:
@@ -861,16 +663,13 @@ class PongServer:
                         room.apply_input(pid, direction)
 
                     else:
-                        # followers only forward to leader (unchanged behavior)
                         leader_addr = self.peers.get(self.leader_id)
                         if leader_addr:
                             send_message(self.control_sock, leader_addr, msg)
                         else:
-                            # No leader known - this is a problem!
                             print(f"Follower: Cannot forward player {pid} input - no leader address!")
 
             except Exception as e:
-                # Log exceptions to help debug
                 import traceback
                 print(f"Error in client_loop: {e}")
                 traceback.print_exc()
@@ -882,13 +681,9 @@ class PongServer:
         while self.running:
             time.sleep(TICK_INTERVAL)
 
-            # followers don't simulate (unchanged)
             if not self.is_leader():
                 continue
 
-            # =====================================================
-            # NEW: iterate ALL rooms instead of single game_state
-            # =====================================================
             if time.time() - last_print > 5.0:
                 for rid, room in self.rooms.items():
                     print(
@@ -896,38 +691,26 @@ class PongServer:
                     )
                 last_print = time.time()
 
-            # =====================================================
-            # NEW: per-room simulation + targeted client updates
-            # =====================================================
             rooms_to_close = []
             for rid, room in self.rooms.items():
 
-                # step only that room
                 room.step()
 
-                # WIN CONDITION CHECK (LEADER ONLY)
-                # =====================================================
                 if (room.game_state.score1 >= WIN_SCORE or
                     room.game_state.score2 >= WIN_SCORE):
 
                     print(f"Room {rid} finished. Closing room.")
 
-                    # POISON PILL → immediately kill clients in this room
-                    # =====================================================
                     game_over_msg = {"type": MSG_GAME_OVER}
                     for c in list(room.client_addrs):
                         send_message(self.client_sock, c, game_over_msg)
-                    # =====================================================
 
-                    # notify followers to delete room
                     close_msg = {"type": MSG_CLOSE_ROOM, "room_id": rid}
-                    # Create a snapshot of peers to avoid RuntimeError
                     for _, addr in list(self.peers.items()):
                         send_message(self.control_sock, addr, close_msg)
 
                     rooms_to_close.append(rid)
                     continue
-                # =============
 
                 update = {
                     "type": MSG_GAME_UPDATE,
@@ -936,34 +719,21 @@ class PongServer:
                     
                 }
 
-                # send only to clients in that room
                 for c in list(room.client_addrs):
                     send_message(self.client_sock, c, update)
 
-            # =====================================================
-            # actually delete finished rooms locally
-            # =====================================================
             for rid in rooms_to_close:
                 self.rooms.pop(rid, None)
-            # =====================================================
 
-            # =====================================================
-            # NEW: replicate FULL rooms snapshot to followers
-            # (authoritative, replaces single-state broadcast)
-            # =====================================================
             if (self.peers or self._forwarding_servers) and self.rooms:
                 rooms_update = {
                     "type": MSG_ROOMS_UPDATE,
                     "rooms": self._rooms_snapshot()
                 }
 
-                # Send to known peers
-                # Create a snapshot of peers to avoid RuntimeError
                 for _, addr in list(self.peers.items()):
                     send_message(self.control_sock, addr, rooms_update)
                 
-                # CRITICAL FIX: Also send to forwarding servers we auto-discovered
-                # These are servers that sent us messages but never properly joined
                 for addr in list(self._forwarding_servers):
                     send_message(self.control_sock, addr, rooms_update)
 
@@ -974,7 +744,6 @@ if __name__ == "__main__":
                         help='Port offset for running multiple servers on same machine (default: 0)')
     args = parser.parse_args()
     
-    # Set the global port offset before creating server
     common.PORT_OFFSET = args.port_offset
     
     if args.port_offset > 0:
