@@ -184,7 +184,7 @@ class PongServer:
 
     def _add_unknown_peer(self, sid: str, addr: Tuple[str, int]):
         if sid and sid not in self.peers and sid != self.server_id:
-            self.peers[sid] = (addr[0], self.control_port)
+            self.peers[sid] = addr
 
     def _print_membership(self):
         print("\n===== MEMBERSHIP TABLE =====")
@@ -219,11 +219,11 @@ class PongServer:
 
         if found:
             print(f"Found peers: {found}")
-            for sid, sip in found:
+            for sid, sip, sport in found:
                 if sid != self.server_id:
-                    self.peers[sid] = (sip, self.control_port)
-                    join_msg = {"type": MSG_JOIN, "id": self.server_id}
-                    send_message(self.control_sock, (sip, self.control_port), join_msg)
+                    self.peers[sid] = (sip, sport)
+                    join_msg = {"type": MSG_JOIN, "id": self.server_id, "control_port": self.control_port}
+                    send_message(self.control_sock, (sip, sport), join_msg)
         else:
             print("No peers found. I am the first server.")
 
@@ -423,20 +423,21 @@ class PongServer:
 
             if t == MSG_JOIN:
                 new_id = msg.get("id")
+                peer_control_port = msg.get("control_port", addr[1])
 
                 if new_id and new_id != self.server_id:
                     if new_id not in self.peers:
-                        print(f"Peer Joined: {new_id} from {addr[0]}")
-                        self.peers[new_id] = (addr[0], self.control_port)
+                        print(f"Peer Joined: {new_id} from {addr[0]}:{peer_control_port}")
+                        self.peers[new_id] = (addr[0], peer_control_port)
 
                         peers_snapshot = list(self.peers.items())
                         for pid, paddr in peers_snapshot:
                             if pid != new_id:
-                                send_message(self.control_sock, addr, {"type": MSG_JOIN, "id": pid})
+                                send_message(self.control_sock, (addr[0], peer_control_port), {"type": MSG_JOIN, "id": pid, "control_port": paddr[1]})
                                 send_message(
                                     self.control_sock,
-                                    (paddr[0], self.control_port),
-                                    {"type": MSG_JOIN, "id": new_id}
+                                    paddr,
+                                    {"type": MSG_JOIN, "id": new_id, "control_port": peer_control_port}
                                 )
 
                         if self.is_leader() and new_id > self.server_id:
@@ -584,7 +585,8 @@ class PongServer:
                 room_id = self._room_id_for_player(pid)
                 room = self._get_room(room_id)
 
-                if pid not in room.connected_players:
+                local_pid = ((pid - 1) % 2) + 1
+                if local_pid not in room.connected_players:
                     print(f"Leader: Player {pid} detected via forwarding (room {room_id})!")
 
                 room.apply_input(pid, direction)
@@ -657,7 +659,8 @@ class PongServer:
                     if self.is_leader():
                         direction = int(msg.get("dir", 0))
 
-                        if pid not in room.connected_players:
+                        local_pid = ((pid - 1) % 2) + 1
+                        if local_pid not in room.connected_players:
                             print(f"Leader: Player {pid} detected locally (room {room_id})!")
 
                         room.apply_input(pid, direction)

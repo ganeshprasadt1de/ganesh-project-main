@@ -20,8 +20,9 @@ def get_smart_broadcast_ip():
         return "255.255.255.255"
 
 def server_discovery_listener(server_id: str, stop_event=None):
-    from common import get_discovery_port
+    from common import get_discovery_port, get_server_control_port
     discovery_port = get_discovery_port()
+    control_port = get_server_control_port()
     sock = make_udp_socket(bind_ip="0.0.0.0", bind_port=discovery_port, broadcast=True)
     sock.settimeout(0.5)
     try:
@@ -36,7 +37,7 @@ def server_discovery_listener(server_id: str, stop_event=None):
                 continue
 
             if msg.get("type") == MSG_DISCOVER_REQUEST:
-                reply = {"type": MSG_DISCOVER_RESPONSE, "id": server_id}
+                reply = {"type": MSG_DISCOVER_RESPONSE, "id": server_id, "control_port": control_port}
                 try:
                     send_message(sock, addr, reply)
                 except Exception:
@@ -44,7 +45,7 @@ def server_discovery_listener(server_id: str, stop_event=None):
     finally:
         sock.close()
 
-def client_discover_servers(timeout: float = 2.0, max_port_offset: int = 10) -> List[Tuple[str, str]]:
+def client_discover_servers(timeout: float = 2.0, max_port_offset: int = 10) -> List[Tuple[str, str, int]]:
     results = []
     start = time.time()
     sock = make_udp_socket(bind_ip="0.0.0.0", bind_port=0, broadcast=True)
@@ -79,9 +80,10 @@ def client_discover_servers(timeout: float = 2.0, max_port_offset: int = 10) -> 
 
             if msg.get("type") == MSG_DISCOVER_RESPONSE:
                 sid = msg.get("id")
-                sip = addr[0] 
+                sip = addr[0]
+                control_port = msg.get("control_port", DISCOVERY_BROADCAST_PORT + 10)
                 if sid and sip:
-                    tup = (sid, sip)
+                    tup = (sid, sip, control_port)
                     if tup not in results:
                         results.append(tup)
     finally:
